@@ -6,6 +6,8 @@
 spatools is a Python package developed to facilitate and accelerate the analysis of spatial transcriptomics data. This package was created as part of a Scientific Initiation project at the National Cancer Institute (Brazil), focusing on practical tools for preprocessing, analysis, and visualization of spatial data in transcriptomics experiments. It provides an intuitive interface for spatial data manipulation and multiple visualization functions to assist researchers in studying gene expression patterns across different samples.
 
 ## 🧬 Features
+The github link: [spatools](https://github.com/pedrovp161/pack_v3.git)
+## 🧬 Features
 The **`spatools`** package is divided into four main modules, each with a specific purpose:
 
 - **`read`** (📂 **input/output**): Functions for reading and saving spatial data files.

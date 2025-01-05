@@ -21,24 +21,21 @@ def save_spatial_files(output_dir: str, adatas_dir: dict):
 
 
 class Reading():
-    def __init__(self, dir) -> None:
-        # definindo diretorio
-        self.DIR = dir
-        self.pasta_filtrado_GEO = os.path.join(self.DIR, "data", "raw")
-        self.dict_raw_GEO = os.path.join(self.DIR, "data", "raw")
-        
-        # Garantindo que os diretórios existem
-        os.makedirs(self.dict_raw_GEO, exist_ok=True)
-        os.makedirs(self.pasta_filtrado_GEO, exist_ok=True)
+    def __init__(self, dir_path: str = "") -> None:
+        # If no path is passed, use the default
+        self.DIR = dir_path if dir_path else os.getcwd()  # Uses the current working directory if None
+                
+        # Make sure the directory exists
+        os.makedirs(self.DIR, exist_ok=True)
 
     def list_path_for_archives(self, pasta: str):
 
         path_files = []
 
-        # Lista os nomes de arquivos na pasta
+        # List the file names in the folder
         path_names = os.listdir(pasta)
 
-        # Cria os caminhos completos para cada arquivo
+        # Creates the full paths to each file
         for path_name in path_names:
             complete_path = os.path.join(pasta, path_name)
             path_files.append(complete_path)
@@ -46,20 +43,17 @@ class Reading():
         return path_files
     
     def list_dict_with_data_free(self):
-        # Cria dicionários para armazenar os resultados
         dictionary = {}
         
-        subfolder_paths = [os.path.join(self.dict_raw_GEO, name) for name in os.listdir(self.dict_raw_GEO) if os.path.isdir(os.path.join(self.dict_raw_GEO, name))]
+        subfolder_paths = [os.path.join(self.DIR, name) for name in os.listdir(self.DIR) if os.path.isdir(os.path.join(self.DIR, name))]
 
-        # Itera sobre as subpastas e aplica a função read_free_h5ad ou sc.read_h5ad
         for subfolder_path in subfolder_paths:
             subfolder_name = os.path.basename(subfolder_path)
 
-            print("Reading subfolder:", subfolder_name)  # Adicionando verificação de diretório
+            print("Reading subfolder:", subfolder_name) # Directory verification
 
             dictionary[subfolder_name] = self.read_free(subfolder_path)
         
-        # remove NaN
         for key in dictionary.keys():
             if dictionary[key].n_vars == 36601:
                 sc.pp.filter_genes(dictionary[key], min_cells=1)#type:ignore
@@ -67,16 +61,14 @@ class Reading():
         return dictionary
     
     def list_dict_with_data_visium(self):
-        # Cria dicionários para armazenar os resultados
         dictionary = {}
         
-        caminhos_subpastas = [os.path.join(self.pasta_filtrado_GEO, nome) for nome in os.listdir(self.pasta_filtrado_GEO) if os.path.isdir(os.path.join(self.pasta_filtrado_GEO, nome))]
+        caminhos_subpastas = [os.path.join(self.DIR, nome) for nome in os.listdir(self.DIR) if os.path.isdir(os.path.join(self.DIR, nome))]
 
-        # Itera sobre as subpastas e aplica a função read_free_h5ad ou sc.read_h5ad
         for caminho_subpasta in caminhos_subpastas:
             nome_subpasta = os.path.basename(caminho_subpasta)
 
-            print("Lendo subpasta:", nome_subpasta)  # Adicionando verificação de diretório
+            print("Lendo subpasta:", nome_subpasta) # Directory verification
 
             dictionary[nome_subpasta] = sc.read_visium(caminho_subpasta)
         
@@ -88,30 +80,25 @@ class Reading():
         return dictionary
     
     def list_dict_with_data_h5ad(self):
-        # Cria dicionário para armazenar os resultados
         dictionary = {}
         
-        # Lista subpastas ou arquivos dentro do diretório
-        caminhos_arquivos = [os.path.join(self.pasta_filtrado_GEO, nome) for nome in os.listdir(self.pasta_filtrado_GEO) if nome.endswith('.h5ad')]
+        caminhos_arquivos = [os.path.join(self.DIR, nome) for nome in os.listdir(self.DIR) if nome.endswith('.h5ad')]
         
-        # Itera sobre os arquivos .h5ad e aplica a função read_h5ad
         for caminho_arquivo in caminhos_arquivos:
             nome_arquivo = os.path.basename(caminho_arquivo)
             
             print("Lendo arquivo:", nome_arquivo)  # Verificando o arquivo que está sendo lido
 
             try:
-                # Lê o arquivo .h5ad e armazena no dicionário
                 adata = sc.read_h5ad(caminho_arquivo)
                 dictionary[nome_arquivo] = adata
             except Exception as e:
                 print(f"Erro ao ler o arquivo {nome_arquivo}: {e}")
                 continue
         
-        # Filtra os genes com base no número de variáveis
         for key, adata in dictionary.items():
             if adata.n_vars == 36601:
-                sc.pp.filter_genes(adata, min_cells=1)  # Remove genes com min_cells < 1 #type: ignore
+                sc.pp.filter_genes(adata, min_cells=1) #type: ignore
 
         return dictionary
 

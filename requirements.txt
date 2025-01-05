@@ -1,0 +1,7 @@
+opencv-python
+scanpy
+numpy==1.26.04
+scikit-image
+pybiomart
+scipy
+openpyxl

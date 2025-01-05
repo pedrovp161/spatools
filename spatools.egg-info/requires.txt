@@ -1,0 +1,6 @@
+opencv-python>=4.9.0.80
+scanpy>=1.10.1
+scikit-image>=0.24.0
+
+[dev]
+twine>=5.1.1

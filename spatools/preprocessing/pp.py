@@ -228,13 +228,14 @@ def processar(adatas_dir: dict):
         adatas_dir[i] = adata
 
 # if __name__ == "__main__":
-#     from spatools.reading.read import Reading
+#     import spatools as st
+#     from spatools.reading.read import Reading as rd
+#     import scanpy as sc
 #     from copy import deepcopy
 #     import random
 #     import os
 
-#     DIR = r"D:\My_decon_package\redo_"
-#     read = Reading(DIR)
+#     read = rd(dir_path=r"D:\My_decon_package\redo_\data\raw_")
 
 #     adatas_dir = read.list_dict_with_data_h5ad()
 #     print(adatas_dir)
@@ -245,15 +246,12 @@ def processar(adatas_dir: dict):
 #     # Random seed for reproducibility
 #     random.seed(42)
 
-#     preprocessar(adatas_dir=adatas_dir, save_files=False, output_dir=r'D:\My_decon_package\redo_\data\filtered')
+#     st.pp.preprocessar(adatas_dir=adatas_dir, save_files=True, mt_percentage_outliers=True)
 
 #     # Check summary of data before and after preprocessing
-#     spots_raw, genes_raw = check_summary(dicionario=adatas_dir_raw)
+#     spots_raw, genes_raw = st.pp.check_summary(dicionario=adatas_dir_raw)
 #     print(f"Número de celulas antes {spots_raw}, numero de genes antes {genes_raw}")
 
-#     spots, genes = check_summary(dicionario=adatas_dir)
+#     spots, genes = st.pp.check_summary(dicionario=adatas_dir)
 #     print(f"Número de celulas depois {spots}, numero de genes depois {genes}")
 #     print(1-spots/spots_raw)
-
-
-del os, np, pd, sc

@@ -1,0 +1,5 @@
+/.venv
+test.py
+/dist
+/spatools.egg-info
+.pybiomart.sqlite

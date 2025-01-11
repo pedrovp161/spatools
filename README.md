@@ -85,3 +85,5 @@ print(1-spots/spots_raw)
 ## Licence
 This package is licensed under the [MIT License](https://www.mit.edu/~amini/LICENSE.md).
 
+...
+[![DOI](https://zenodo.org/badge/912254487.svg)](https://doi.org/10.5281/zenodo.14611084)

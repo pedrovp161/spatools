@@ -3,3 +3,4 @@ test.py
 /dist
 /spatools.egg-info
 .pybiomart.sqlite
+main.ipynb

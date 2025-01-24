@@ -75,15 +75,16 @@ def plot_bar_by_group(adata: AnnData, clusters_col: str = "leiden_0.5") -> None:
     plt.show()
 ### agrupar
 
-# agrupamento feito
 def plot_bar(
         adata: AnnData, 
         clusters_col: str, 
         group_by: str, 
-        group_order: list = None, #type: ignore
+        group_order: list = None,  # type: ignore
         title: str = '', 
         xlabel: str = '', 
-        ylabel: str = 'Porcentagem (%)') -> None:
+        ylabel: str = 'Porcentagem (%)',
+        use_percentage: bool = True  # Novo argumento
+    ) -> None:
     """
     Function to plot stacked bar charts with grouping.
 
@@ -103,6 +104,8 @@ def plot_bar(
         Label for the X-axis (default: '').
     ylabel : str, optional
         Label for the Y-axis (default: 'Porcentagem (%)').
+    use_percentage : bool, optional
+        If True, plot percentages; otherwise, plot absolute values (default: True).
 
     Returns
     -------
@@ -110,38 +113,40 @@ def plot_bar(
         The function displays the plot.
     """
 
-    # Verificar se clusters_col está em adata.obs
     if clusters_col not in adata.obs.columns:
         raise ValueError(f"A coluna '{clusters_col}' não está em adata.obs")
     
-    # Verificar se as cores estão definidas em adata.uns
     color_key = f"{clusters_col}_colors"
     if color_key not in adata.uns:
         raise ValueError(f"As cores para '{clusters_col}' não estão definidas em adata.uns['{color_key}']")
 
-    # Obter as cores dos clusters
     cluster_colors = adata.uns[color_key]
 
-    # Verificar se group_by está em adata.obs
+    # verify if group_by is in adata.obs
     if group_by not in adata.obs.columns:
         raise ValueError(f"A coluna '{group_by}' não está em adata.obs")
 
-    # Agrupar dados por group_by e clusters_col
+    # group data by group_by e clusters_col
     count_data = adata.obs.groupby([group_by, clusters_col]).size().unstack(fill_value=0)
 
-    # Reordenar os grupos, se uma ordem for fornecida
+    # reorder groups in a specific order
     if group_order:
         count_data = count_data.reindex(group_order)
 
-    # Calcular a porcentagem
-    percentage_data = count_data.div(count_data.sum(axis=1), axis=0) * 100  # type: ignore
+    # decide between percentage and absolute values
+    if use_percentage:
+        data_to_plot = count_data.div(count_data.sum(axis=1), axis=0) * 100  # type: ignore
+        ylabel = 'Porcentagem (%)'
+    else:
+        data_to_plot = count_data
+        ylabel = 'Valores absolutos' 
 
-    # Definir cores usando a paleta de cores do AnnData
-    cluster_labels = percentage_data.columns
+    # use colors defined in adata.uns
+    cluster_labels = data_to_plot.columns
     colors = [cluster_colors[int(label)] for label in cluster_labels]
 
-    # Plotar gráfico de barras empilhadas
-    ax = percentage_data.plot(kind='bar', stacked=True, figsize=(12, 6), color=colors)
+    # plot stacked bar
+    ax = data_to_plot.plot(kind='bar', stacked=True, figsize=(12, 6), color=colors)
     ax.set_title(title, fontsize=25)
     ax.set_xlabel(xlabel, fontsize=25)
     ax.set_ylabel(ylabel, fontsize=25)

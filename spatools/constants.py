@@ -1,21 +1,6 @@
 import os
 DIR = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__),"..")))
 DATA = os.path.join(DIR, "data")
-# RESULTADOS = os.path.join(DATA, "Resultados")
-# H5AD = os.path.join(DATA, "all_h5ad_files")
-# FILTRO_GERAL = os.path.join(RESULTADOS, "filtro_geral")
-# PROCESSAMENTO_GERAL = os.path.join(RESULTADOS, "processamento_geral")
-# CELL2LOCATION = os.path.join(RESULTADOS, "cell2loc")
-# MODEL = os.path.join(CELL2LOCATION, "scref.h5ad")
-# PATH_SC = os.path.join(DATA, "OvaryAnnoTME.h5ad")
-# ALL_FILES = os.path.join(DATA, "all_files")
-# RAW_GEO = os.path.join(DATA, "raw_geo")
-# RAW_VISIUM = os.path.join(DATA, "raw_visium")
-# RAW_NATURE = os.path.join(DATA, "raw_nature")
-# FILTRO_K5 = os.path.join(RESULTADOS, "filtro_k5")
-# RAW = os.path.join(DATA, "raw")
-INTEGRADO = os.path.join(DATA, "scvi_5000_v3")
-
 
 # dictionary of colors
 COLORS_23 = {
@@ -43,4 +28,31 @@ COLORS_23 = {
     21: (128, 77, 17),
     22: (129, 47, 25)
 }
+
+# dictionary of colors in hex
+COLORS_23_HEX = [
+    "#00206F",  # 0
+    "#E6D647",  # 1
+    "#AA6028",  # 2
+    "#13B151",  # 3
+    "#590058",  # 4
+    "#C5DF77",  # 5
+    "#0187E2",  # 6
+    "#FFA161",  # 7
+    "#8865C3",  # 8
+    "#FC506F",  # 9
+    "#76E8C3",  # 10
+    "#7E002E",  # 11
+    "#2A5200",  # 12
+    "#FF7FCA",  # 13
+    "#813E73",  # 14
+    "#FF878F",  # 15
+    "#22DEE6",  # 16
+    "#C94E3C",  # 17
+    "#836E20",  # 18
+    "#9F9638",  # 19
+    "#B149A1",  # 20
+    "#804D11",  # 21
+    "#812F19"   # 22
+]
 

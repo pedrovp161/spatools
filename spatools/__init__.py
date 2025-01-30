@@ -1,5 +1,3 @@
-
-
 # Importa os submódulos do pacote
 from . import plotting as pl
 from . import preprocessing as pp

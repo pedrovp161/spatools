@@ -6,7 +6,7 @@ from anndata import AnnData
 from PIL import Image
 from skimage import io
 from .. import constants as con
-from typing import List, Any
+from typing import List, Any, Optional
 from pybiomart import Server
 import matplotlib.pyplot as plt
 from scipy.spatial import distance
@@ -363,6 +363,125 @@ def merge_clusters(adata: AnnData,
 
     # Return the updated AnnData object
     return adata
+
+def remove_spots(adata: AnnData, 
+                 type: str, 
+                 n_spots: int = 1, 
+                 x_minimo: Optional[int] = None, 
+                 x_maximo: Optional[int] = None, 
+                 y_minimo: Optional[int] = None, 
+                 y_maximo: Optional[int] = None, 
+                 invert_x: bool = False, 
+                 invert_y: bool = False):
+    """
+    Remove spots do objeto AnnData com base na posição espacial.
+
+    Parâmetros:
+    - adata: AnnData
+        Objeto contendo coordenadas espaciais em obsm["spatial"].
+    - type: str
+        Tipo de remoção ('y_max', 'y_min', 'x_max', 'x_min', 'y', 'x', 'all', 'lower', 'upper').
+    - n_spots: int, opcional (padrão: 1)
+        Número de spots a remover em cada critério.
+    - x_minimo: float, opcional (padrão: None)
+        Valor mínimo para a coordenada x.
+    - x_maximo: float, opcional (padrão: None)
+        Valor máximo para a coordenada x.
+    - y_minimo: float, opcional (padrão: None)
+        Valor mínimo para a coordenada y.
+    - y_maximo: float, opcional (padrão: None)
+        Valor máximo para a coordenada y.
+    - invert_x: bool, opcional (padrão: False)
+        Se True, inverte a seleção para x_minimo ou x_maximo.
+    - invert_y: bool, opcional (padrão: False)
+        Se True, inverte a seleção para y_minimo ou y_maximo.
+
+    Retorna:
+    - AnnData atualizado com os spots removidos.
+    """
+    spatial_coords = adata.obsm["spatial"]
+    n_obs = adata.n_obs
+
+    # Identificar os índices dos valores extremos
+    sorted_indices = {
+        "y_max": np.argsort(spatial_coords[:, 1])[-n_spots:],
+        "y_min": np.argsort(spatial_coords[:, 1])[:n_spots],
+        "x_max": np.argsort(spatial_coords[:, 0])[-n_spots:],
+        "x_min": np.argsort(spatial_coords[:, 0])[:n_spots]
+    }
+
+    # Criar máscara para manter todos os spots
+    mask = np.ones(n_obs, dtype=bool)
+
+    if type in sorted_indices:
+        mask[sorted_indices[type]] = False
+
+    elif type == "y":
+        mask[sorted_indices["y_max"]] = False
+        mask[sorted_indices["y_min"]] = False
+
+    elif type == "x":
+        mask[sorted_indices["x_max"]] = False
+        mask[sorted_indices["x_min"]] = False
+
+    elif type == "all":
+        for idx in sorted_indices.values():
+            mask[idx] = False
+
+    elif type in ("lower", "upper"):
+        # Filtrar por x_minimo e x_maximo
+        if x_minimo is not None and x_maximo is not None:
+            x_filter = (spatial_coords[:, 0] > x_minimo) & (spatial_coords[:, 0] < x_maximo)
+            if invert_x:
+                x_filter = ~x_filter
+
+        elif x_minimo is not None:
+            x_filter = spatial_coords[:, 0] > x_minimo
+            if invert_x:
+                x_filter = spatial_coords[:, 0] < x_minimo
+
+        elif x_maximo is not None:
+            x_filter = spatial_coords[:, 0] < x_maximo
+            if invert_x:
+                x_filter = spatial_coords[:, 0] > x_maximo
+
+        else:
+            x_filter = np.ones(n_obs, dtype=bool)
+
+        # Filtrar por y_minimo e y_maximo
+        if y_minimo is not None and y_maximo is not None:
+            y_filter = (spatial_coords[:, 1] > y_minimo) & (spatial_coords[:, 1] < y_maximo)
+            if invert_y:
+                y_filter = ~y_filter
+
+        elif y_minimo is not None:
+            y_filter = spatial_coords[:, 1] > y_minimo
+            if invert_y:
+                y_filter = spatial_coords[:, 1] < y_minimo
+
+        elif y_maximo is not None:
+            y_filter = spatial_coords[:, 1] < y_maximo
+            if invert_y:
+                y_filter = spatial_coords[:, 1] > y_maximo
+
+        else:
+            y_filter = np.ones(n_obs, dtype=bool)
+
+        combined_filter = x_filter & y_filter
+        filtered_coords = spatial_coords[combined_filter]
+        combined_idx = np.where(combined_filter)[0]
+
+        if len(filtered_coords) < n_spots:
+            raise ValueError(f"Apenas {len(filtered_coords)} spots disponíveis após filtragem, mas {n_spots} são necessários.")
+
+        y_max_idx_filtered = np.argsort(filtered_coords[:, 1])[-n_spots:] if type == "lower" else np.argsort(filtered_coords[:, 1])[:n_spots]
+        y_max_idx = combined_idx[y_max_idx_filtered]
+        mask[y_max_idx] = False
+
+    else:
+        raise ValueError(f"Tipo '{type}' inválido. Escolha entre {list(sorted_indices.keys()) + ['y', 'x', 'all', 'lower', 'upper']}.")
+
+    return adata[mask, :].copy()
 
 def Z_score_simple(df):# TODO
     ...

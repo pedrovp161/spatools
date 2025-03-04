@@ -4,3 +4,5 @@ test.py
 /spatools.egg-info
 .pybiomart.sqlite
 main.ipynb
+main.py
+process_img.py

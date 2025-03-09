@@ -7,9 +7,10 @@ from .tl import (
 )
 
 __all__ = [
-    'process_image',
-    'remove_random_rows',
+    'correlate_distances',
+    "z_score",
     'convert_df_ens',
+    'remove_random_rows',
     'convert_anndata_ens',
     'merge_clusters'
 ]

@@ -10,7 +10,7 @@ import matplotlib.patches as _mpatches
 
 
 
-### agrupar
+### deprecated
 def plot_bar_by_batch(adata: AnnData, clusters_col: str) -> None:
     # Verificar se cluster_col está em adata.obs
     if clusters_col not in adata.obs.columns:
@@ -73,7 +73,7 @@ def plot_bar_by_group(adata: AnnData, clusters_col: str = "leiden_0.5") -> None:
     ax.legend(title='Clusters', ncol=2, loc="right", bbox_to_anchor=(1.17, 0.5))
     plt.tight_layout()
     plt.show()
-### agrupar
+### deprecated
 
 def plot_bar(
         adata: AnnData, 
@@ -154,7 +154,6 @@ def plot_bar(
     ax.legend(title="clusters", ncol=2, loc="right", bbox_to_anchor=(1.17, 0.5))
     plt.tight_layout()
     plt.show()
-
 
 def plot_clusters_quality_violin_boxplot(
         adata: AnnData, 
@@ -249,7 +248,6 @@ def plot_clusters_quality_violin_boxplot(
     fig.tight_layout()
     plt.show()
 
-
 def plot_spatial_clusters(
         adata: AnnData, 
         clusters_col: str = "leiden_0.5", 
@@ -334,11 +332,6 @@ def plot_spatial_clusters(
         plt.savefig(f"{output_file}_{library}.png", format="png", dpi=dpi)
     plt.show()
 
-
-# Exemplo de uso:
-# plot_spatial_clusters(adata)
-
-
 def plot_single_spatial_image(
         adata: AnnData,
         clusters_col: str = "leiden_0.5",
@@ -417,10 +410,8 @@ def plot_single_spatial_image(
             
         plt.show()
 
-
-# Exemplo de uso:
-# plot_single_spatial_image(adata, size=8)
-
+def z_score(adata: AnnData):
+    ...
 
 
 def extract_P_number(file_name: str) -> int:
@@ -429,21 +420,12 @@ def extract_P_number(file_name: str) -> int:
     match = re.search(r'P(\d+)', file_name)
     return int(match.group(1)) if match else float('inf')  # Inf se não encontrar # type: ignore
 
-
 def sample_classifier(file_name: str, classification_dict: dict) -> str:
     """Classifies a sample based on the file name using a classification dictionary."""
     for key, value in classification_dict.items():
         if key in file_name:
             return key
     return "Unknown"
-
-
-"""    
-#### legenda ideal para log1p_genes_by_counts    
-legend1_pos=(0.75, 0.25),
-legend2_pos=(0.88, 0.25),
-        """
-
 
 def outlier_quality(
         *,

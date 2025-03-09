@@ -1,17 +1,462 @@
 import os
 import cv2 as cv
+import itertools
 import numpy as np
 import pandas as pd
-from anndata import AnnData
 from PIL import Image
 from skimage import io
-from .. import constants as con
-from typing import List, Any, Optional
+from anndata import AnnData
 from pybiomart import Server
+from .. import constants as con
 import matplotlib.pyplot as plt
 from scipy.spatial import distance
+from typing import List, Any, Optional
+from scipy.spatial.distance import cdist
 from multiprocessing import Pool, cpu_count
 
+def spatools_check(adata):
+    if "spatools" in adata.uns:
+        print("Reescrevendo análise antiga!")
+        i = input("Deseja proceder? [s ou n] ").strip().lower()
+        if i == "n":
+            raise Exception("Operação cancelada pelo usuário.")
+        elif i != "s":
+            raise Exception("Resposta inválida. Use 's' para sim ou 'n' para não.")
+
+def mesure_distances(adata: AnnData, cluster_col: str):
+    data = pd.DataFrame(adata.obsm["spatial"])
+    data[cluster_col] = adata.obs[cluster_col].values
+    data.rename(columns={0: "x", 1: "y"}, inplace=True)
+
+    x = np.array(data["x"])
+    y = np.array(data["y"])
+    colors = np.array(data[cluster_col])
+
+    # Criando a matriz de pontos
+    points = np.column_stack((x, y))
+    dist_matrix = cdist(points, points)
+    np.fill_diagonal(dist_matrix, np.inf)  # Evita distâncias zero consigo mesmo
+
+    # Encontrando a menor distância e calculando o threshold
+    min_distance = np.min(dist_matrix)
+    threshold_distance = min_distance * 1.1
+
+    # Aplicando threshold: excluindo distâncias maiores que o threshold
+    mask = dist_matrix < threshold_distance
+
+    # Criando um dataframe com os pontos mais próximos dentro do threshold
+    nearest_points = []
+    for i in range(len(points)):
+        neighbors = np.where(mask[i])[0]  # Índices dos pontos dentro do threshold
+        for j in neighbors:
+            nearest_points.append([x[i], y[i], colors[i], x[j], y[j], colors[j], dist_matrix[i, j]])
+
+    nearest_df = pd.DataFrame(nearest_points, columns=["x", "y", "color", "x_neigh", "y_neigh", "color_neigh", "distance"])
+    
+    return nearest_df
+
+def correlate_distances(adata: AnnData, is_concatenated=False, cluster_col: str = "cluster"):
+    """
+    Calcula as distâncias entre pontos espaciais e armazena os vizinhos mais próximos dentro do threshold.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Objeto AnnData contendo as coordenadas espaciais em `obsm["spatial"]`.
+    is_concatenated : bool, optional
+        Indica se os dados já foram concatenados. Default é False.
+    cluster_col : str, optional
+        Nome da coluna em `adata.obs` contendo a informação do cluster.
+
+    Returns
+    -------
+    adata : AnnData
+        O objeto AnnData com os vizinhos mais próximos armazenados em `uns["spatools"]`.
+    """
+    
+    # Verificando se a análise já foi feita
+    spatools_check(adata)
+
+    if is_concatenated:
+        merged_df = []
+        for batch in adata.obs["batch"].unique():
+            subset = adata[adata.obs["batch"] == batch].copy()
+            nearest_df = mesure_distances(adata=subset, cluster_col=cluster_col)
+            nearest_df["batch"] = batch  # Adiciona a coluna de batch
+            nearest_df["combination"] = nearest_df.apply(lambda row: tuple(sorted((int(row["color"]), int(row["color_neigh"])))), axis=1)
+            merged_df.append(nearest_df)
+
+        # Concatenando os DataFrames individuais antes de armazenar
+        adata.uns["spatools"] = pd.concat(merged_df, ignore_index=True)
+
+    else:
+        if "spatools" not in adata.uns:
+            nearest_df = mesure_distances(adata=adata, cluster_col=cluster_col)
+            nearest_df["batch"] = batch  # Adiciona a coluna de batch
+            nearest_df["combination"] = nearest_df.apply(lambda row: tuple(sorted((int(row["color"]), int(row["color_neigh"])))), axis=1)
+            adata.uns["spatools"] = nearest_df
+
+    return adata
+
+def remove_random_rows(df: pd.DataFrame, 
+                       num_rows: int):
+    # Check if the number of rows to remove is greater than the DataFrame's length
+    if num_rows >= len(df):
+        return pd.DataFrame()  # Return an empty DataFrame if all rows are to be removed
+
+    # Randomly select rows to remove
+    remove_indices = np.random.choice(df.index, size=num_rows, replace=False)
+
+    # Remove selected rows
+    df_removed = df.drop(index=remove_indices)#type: ignore
+
+    return df_removed
+
+def convert_df_ens(ens: Any):
+    """
+    Given a list of Ensembl gene IDs, convert them to external gene names using the Ensembl BioMart API.
+
+    Parameters
+    ----------
+    ens : List
+        List of Ensembl gene IDs
+
+    Returns
+    -------
+    df : pd.DataFrame
+        A DataFrame with the Ensembl gene ID as index and the external gene name as the only column
+    """
+    if not isinstance(ens, list):
+        raise ValueError("Values must be in list format")
+
+    urls = [
+        "http://www.ensembl.org",
+        "http://useast.ensembl.org",
+        "http://asia.ensembl.org"
+    ]
+
+    for url in urls:
+        try:
+            server = Server(host=url)
+
+            dataset = (server.marts["ENSEMBL_MART_ENSEMBL"]
+                          .datasets['hsapiens_gene_ensembl'])
+
+            df = dataset.query(attributes=['ensembl_gene_id', 'external_gene_name'])
+
+            # Verificar se as colunas esperadas estão presentes
+            if 'Gene stable ID' not in df.columns or 'Gene name' not in df.columns:
+                raise KeyError(f"Expected columns not found in the dataset from {url}")
+
+            result_dict = df.set_index('Gene stable ID')['Gene name'].to_dict()
+
+            result = {i: result_dict.get(i, None) for i in ens}
+
+            df = pd.DataFrame.from_dict(result, orient="index", columns=["Gene Name"])
+
+            df = df.dropna()
+
+            return df
+
+        except KeyError as ke:
+            print(f"KeyError with URL {url}: {ke}")
+        except Exception as e:
+            print(f"Error with URL {url}: {e}")
+
+    raise RuntimeError("All Ensembl URLs failed.")
+
+def convert_anndata_ens(adata: AnnData, 
+                        clusters_col: str = "gene_symbol"):
+    """
+    Convert Ensembl gene IDs in AnnData object to external gene names.
+    
+    Parameters
+    ----------
+    adata : AnnData
+        Anndata object containing the data.
+    clusters_col : str, optional
+        Name of the column to store the external gene names (default: "gene_symbol").
+    
+    Returns
+    -------
+    AnnData
+        Anndata object with Ensembl gene IDs converted to external gene names.
+    """
+    gene_ids = adata.var.index.to_list()
+
+    converted = convert_df_ens(gene_ids)  # type: ignore
+    if converted is None or converted.empty:
+        raise RuntimeError("Conversion failed; no valid mappings were returned.")
+    
+    adata.var[clusters_col] = converted["Gene Name"]
+    df = adata.var
+
+    # Convertendo a coluna para object temporariamente
+    df[clusters_col] = df[clusters_col].astype('object')
+
+    # Preenchendo os valores np.nan com os valores dos índices correspondentes
+    df[clusters_col] = df[clusters_col].fillna(pd.Series(df.index, index=df.index))
+
+    # Convertendo de volta para category
+    df[clusters_col] = df[clusters_col].astype('category')
+
+    adata.var = df
+
+    return adata
+
+# merge diferent clusters in same resolution
+def merge_clusters(adata: AnnData, 
+                   clusters_col: str, 
+                   rename_dict: dict, 
+                   new_clusters_col: str
+                   ):
+    """
+    Merge clusters from different resolutions in the same AnnData object.
+
+    Parameters
+    ----------
+    adata : AnnData
+        AnnData object containing the data.
+    clusters_col : str
+        Name of the column containing the cluster labels to be merged.
+    rename_dict : dict
+        Dictionary mapping old cluster names to new ones.
+    new_clusters_col : str
+        Name of the new column to store the merged cluster labels.
+
+    Returns
+    -------
+    AnnData
+        AnnData object with merged cluster labels.
+    """
+    if clusters_col not in adata.obs:
+        raise KeyError(f"'{clusters_col}' column not found in 'adata.obs'.")
+
+    # Replace old cluster labels with new ones
+    adata.obs[new_clusters_col] = adata.obs[clusters_col].replace(rename_dict)
+
+    # Ensure values are in the correct order
+    unique_values = sorted(adata.obs[new_clusters_col].unique())
+
+    # Create a mapping of old values to sequential integers
+    value_mapping = {old_value: new_value for new_value, old_value in enumerate(unique_values)}
+
+    # Map the new values back to the column
+    adata.obs[new_clusters_col] = adata.obs[new_clusters_col].map(value_mapping)
+
+    # Attempt to copy colors from the original column, if available
+    if f"{clusters_col}_colors" in adata.uns:
+        original_colors = adata.uns[f"{clusters_col}_colors"]
+
+        # Map colors to the new cluster order if possible
+        new_colors = [original_colors[value_mapping[old_value]] for old_value in unique_values]
+        adata.uns[f"{new_clusters_col}_colors"] = new_colors
+    else:
+        print(f"Warning: '{clusters_col}_colors' not found in 'adata.uns'. Colors not transferred.")
+
+    # Convert the new cluster column to integers, then back to strings
+    adata.obs[new_clusters_col] = adata.obs[new_clusters_col].astype(int).astype(str)
+
+    # Return the updated AnnData object
+    return adata
+
+def remove_spots(adata: AnnData, 
+                 type: str, 
+                 n_spots: int = 1, 
+                 x_minimo: Optional[int] = None, 
+                 x_maximo: Optional[int] = None, 
+                 y_minimo: Optional[int] = None, 
+                 y_maximo: Optional[int] = None, 
+                 invert_x: bool = False, 
+                 invert_y: bool = False):
+    """
+    Remove spots do objeto AnnData com base na posição espacial.
+
+    Parâmetros:
+    - adata: AnnData
+        Objeto contendo coordenadas espaciais em obsm["spatial"].
+    - type: str
+        Tipo de remoção ('y_max', 'y_min', 'x_max', 'x_min', 'y', 'x', 'all', 'lower', 'upper').
+    - n_spots: int, opcional (padrão: 1)
+        Número de spots a remover em cada critério.
+    - x_minimo: float, opcional (padrão: None)
+        Valor mínimo para a coordenada x.
+    - x_maximo: float, opcional (padrão: None)
+        Valor máximo para a coordenada x.
+    - y_minimo: float, opcional (padrão: None)
+        Valor mínimo para a coordenada y.
+    - y_maximo: float, opcional (padrão: None)
+        Valor máximo para a coordenada y.
+    - invert_x: bool, opcional (padrão: False)
+        Se True, inverte a seleção para x_minimo ou x_maximo.
+    - invert_y: bool, opcional (padrão: False)
+        Se True, inverte a seleção para y_minimo ou y_maximo.
+
+    Retorna:
+    - AnnData atualizado com os spots removidos.
+    """
+    spatial_coords = adata.obsm["spatial"]
+    n_obs = adata.n_obs
+
+    # Identificar os índices dos valores extremos
+    sorted_indices = {
+        "y_max": np.argsort(spatial_coords[:, 1])[-n_spots:],
+        "y_min": np.argsort(spatial_coords[:, 1])[:n_spots],
+        "x_max": np.argsort(spatial_coords[:, 0])[-n_spots:],
+        "x_min": np.argsort(spatial_coords[:, 0])[:n_spots]
+    }
+
+    # Criar máscara para manter todos os spots
+    mask = np.ones(n_obs, dtype=bool)
+
+    if type in sorted_indices:
+        mask[sorted_indices[type]] = False
+
+    elif type == "y":
+        mask[sorted_indices["y_max"]] = False
+        mask[sorted_indices["y_min"]] = False
+
+    elif type == "x":
+        mask[sorted_indices["x_max"]] = False
+        mask[sorted_indices["x_min"]] = False
+
+    elif type == "all":
+        for idx in sorted_indices.values():
+            mask[idx] = False
+
+    elif type in ("lower", "upper"):
+        # Filtrar por x_minimo e x_maximo
+        if x_minimo is not None and x_maximo is not None:
+            x_filter = (spatial_coords[:, 0] > x_minimo) & (spatial_coords[:, 0] < x_maximo)
+            if invert_x:
+                x_filter = ~x_filter
+
+        elif x_minimo is not None:
+            x_filter = spatial_coords[:, 0] > x_minimo
+            if invert_x:
+                x_filter = spatial_coords[:, 0] < x_minimo
+
+        elif x_maximo is not None:
+            x_filter = spatial_coords[:, 0] < x_maximo
+            if invert_x:
+                x_filter = spatial_coords[:, 0] > x_maximo
+
+        else:
+            x_filter = np.ones(n_obs, dtype=bool)
+
+        # Filtrar por y_minimo e y_maximo
+        if y_minimo is not None and y_maximo is not None:
+            y_filter = (spatial_coords[:, 1] > y_minimo) & (spatial_coords[:, 1] < y_maximo)
+            if invert_y:
+                y_filter = ~y_filter
+
+        elif y_minimo is not None:
+            y_filter = spatial_coords[:, 1] > y_minimo
+            if invert_y:
+                y_filter = spatial_coords[:, 1] < y_minimo
+
+        elif y_maximo is not None:
+            y_filter = spatial_coords[:, 1] < y_maximo
+            if invert_y:
+                y_filter = spatial_coords[:, 1] > y_maximo
+
+        else:
+            y_filter = np.ones(n_obs, dtype=bool)
+
+        combined_filter = x_filter & y_filter
+        filtered_coords = spatial_coords[combined_filter]
+        combined_idx = np.where(combined_filter)[0]
+
+        if len(filtered_coords) < n_spots:
+            raise ValueError(f"Apenas {len(filtered_coords)} spots disponíveis após filtragem, mas {n_spots} são necessários.")
+
+        y_max_idx_filtered = np.argsort(filtered_coords[:, 1])[-n_spots:] if type == "lower" else np.argsort(filtered_coords[:, 1])[:n_spots]
+        y_max_idx = combined_idx[y_max_idx_filtered]
+        mask[y_max_idx] = False
+
+    else:
+        raise ValueError(f"Tipo '{type}' inválido. Escolha entre {list(sorted_indices.keys()) + ['y', 'x', 'all', 'lower', 'upper']}.")
+
+    return adata[mask, :].copy()
+
+def z_score(adata: AnnData, filter_column: str = None, filter_value: str = None):
+    # Verifica se a chave "spatools" existe em uns
+    if "spatools" not in adata.uns:
+        raise KeyError("A chave 'spatools' não foi encontrada em adata.uns")
+
+    # Verifica se a coluna existe
+    if filter_column and filter_column not in adata.uns["spatools"]:
+        raise ValueError(f"A coluna '{filter_column}' não existe em adata.uns['spatools']")
+
+    # Filtra os dados, se necessário
+    df = adata.uns["spatools"].copy()
+    if filter_value is not None:
+        df = df[df[filter_column] == filter_value]
+
+    z_scores_by_batch = {}  # Armazena os resultados por batch
+
+    for batch in df["batch"].unique():
+        filtro_batch = df[df["batch"] == batch]  # Mantém filtro_batch intacto
+
+        # 1. Contagem de observações para cada combinação
+        filtro_batch = filtro_batch[filtro_batch["color_neigh"] != filtro_batch["color"]]
+
+        score = pd.DataFrame(filtro_batch["combination"].value_counts()).reset_index()
+        score.columns = ["combination", "count"]
+
+        # 2. Calculando a proporção observada
+        score["proportion_observed"] = score["count"] / score["count"].sum()
+
+        # 3. Contagem de cada cluster individual
+        cluster_counts = filtro_batch["color"].value_counts()
+
+        # 4. Frequência dos clusters
+        cluster_frequencies = cluster_counts / cluster_counts.sum()
+
+        # 5. Obter todas as combinações possíveis de clusters
+        clusters = cluster_counts.index.tolist()
+        combinacoes = list(itertools.combinations(clusters, 2))
+
+        # 6. Calcular a proporção esperada para cada combinação
+        proporcoes_esperadas = {
+            tuple(sorted((int(c1), int(c2)))): 2 * cluster_frequencies[c1] * cluster_frequencies[c2]
+            for c1, c2 in combinacoes
+        }
+
+        # 7. Converter para DataFrame
+        proporcoes_df = pd.DataFrame(list(proporcoes_esperadas.items()), columns=["combination", "proportion_expected"])
+
+        # 8. Merge entre as contagens observadas e esperadas
+        merged_ordered_df = pd.merge(score, proporcoes_df, on="combination", how="inner")
+
+        # 9. Ajustando o número de vizinhos
+        average_neighbors = 6
+        total_connections = len(filtro_batch) * average_neighbors / 2 
+
+        # 10. Contagem esperada
+        merged_ordered_df["expected_count"] = merged_ordered_df["proportion_expected"] * total_connections
+        merged_ordered_df["proportion_expected"] = merged_ordered_df["expected_count"] / merged_ordered_df["expected_count"].sum()
+
+        # 11. Cálculo do desvio padrão
+        merged_ordered_df["std_dev"] = np.sqrt(
+            (merged_ordered_df["proportion_expected"] * (1 - merged_ordered_df["proportion_expected"])) / len(filtro_batch)
+        )
+
+        # 12. Calculando o Z-score
+        merged_ordered_df["Z_score"] = (
+            merged_ordered_df["proportion_observed"] - merged_ordered_df["proportion_expected"]
+        ) / merged_ordered_df["std_dev"]
+
+        # 13. Armazena no dicionário
+        z_scores_by_batch[batch] = merged_ordered_df
+
+    # 14. Armazena os resultados no AnnData
+    adata.uns["z-score"] = z_scores_by_batch
+
+    return adata
+
+
+# deprecated
 def calculate_distances(args):
     """
     Calculate the distances between each pair of points within a given threshold.
@@ -198,338 +643,3 @@ def process_image(input_image_path,
     else:
         print("Nenhum círculo foi detectado.")
         return None, None
-
-
-def remove_random_rows(df: pd.DataFrame, 
-                       num_rows: int):
-    # Check if the number of rows to remove is greater than the DataFrame's length
-    if num_rows >= len(df):
-        return pd.DataFrame()  # Return an empty DataFrame if all rows are to be removed
-
-    # Randomly select rows to remove
-    remove_indices = np.random.choice(df.index, size=num_rows, replace=False)
-
-    # Remove selected rows
-    df_removed = df.drop(index=remove_indices)#type: ignore
-
-    return df_removed
-
-def convert_df_ens(ens: Any):
-    """
-    Given a list of Ensembl gene IDs, convert them to external gene names using the Ensembl BioMart API.
-
-    Parameters
-    ----------
-    ens : List
-        List of Ensembl gene IDs
-
-    Returns
-    -------
-    df : pd.DataFrame
-        A DataFrame with the Ensembl gene ID as index and the external gene name as the only column
-    """
-    if not isinstance(ens, list):
-        raise ValueError("Values must be in list format")
-
-    urls = [
-        "http://www.ensembl.org",
-        "http://useast.ensembl.org",
-        "http://asia.ensembl.org"
-    ]
-
-    for url in urls:
-        try:
-            server = Server(host=url)
-
-            dataset = (server.marts["ENSEMBL_MART_ENSEMBL"]
-                          .datasets['hsapiens_gene_ensembl'])
-
-            df = dataset.query(attributes=['ensembl_gene_id', 'external_gene_name'])
-
-            # Verificar se as colunas esperadas estão presentes
-            if 'Gene stable ID' not in df.columns or 'Gene name' not in df.columns:
-                raise KeyError(f"Expected columns not found in the dataset from {url}")
-
-            result_dict = df.set_index('Gene stable ID')['Gene name'].to_dict()
-
-            result = {i: result_dict.get(i, None) for i in ens}
-
-            df = pd.DataFrame.from_dict(result, orient="index", columns=["Gene Name"])
-
-            df = df.dropna()
-
-            return df
-
-        except KeyError as ke:
-            print(f"KeyError with URL {url}: {ke}")
-        except Exception as e:
-            print(f"Error with URL {url}: {e}")
-
-    raise RuntimeError("All Ensembl URLs failed.")
-
-
-def convert_anndata_ens(adata: AnnData, 
-                        clusters_col: str = "gene_symbol"):
-    """
-    Convert Ensembl gene IDs in AnnData object to external gene names.
-    
-    Parameters
-    ----------
-    adata : AnnData
-        Anndata object containing the data.
-    clusters_col : str, optional
-        Name of the column to store the external gene names (default: "gene_symbol").
-    
-    Returns
-    -------
-    AnnData
-        Anndata object with Ensembl gene IDs converted to external gene names.
-    """
-    gene_ids = adata.var.index.to_list()
-
-    converted = convert_df_ens(gene_ids)  # type: ignore
-    if converted is None or converted.empty:
-        raise RuntimeError("Conversion failed; no valid mappings were returned.")
-    
-    adata.var[clusters_col] = converted["Gene Name"]
-    df = adata.var
-
-    # Convertendo a coluna para object temporariamente
-    df[clusters_col] = df[clusters_col].astype('object')
-
-    # Preenchendo os valores np.nan com os valores dos índices correspondentes
-    df[clusters_col] = df[clusters_col].fillna(pd.Series(df.index, index=df.index))
-
-    # Convertendo de volta para category
-    df[clusters_col] = df[clusters_col].astype('category')
-
-    adata.var = df
-
-    return adata
-
-
-# merge diferent clusters in same resolution
-def merge_clusters(adata: AnnData, 
-                   clusters_col: str, 
-                   rename_dict: dict, 
-                   new_clusters_col: str
-                   ):
-    """
-    Merge clusters from different resolutions in the same AnnData object.
-
-    Parameters
-    ----------
-    adata : AnnData
-        AnnData object containing the data.
-    clusters_col : str
-        Name of the column containing the cluster labels to be merged.
-    rename_dict : dict
-        Dictionary mapping old cluster names to new ones.
-    new_clusters_col : str
-        Name of the new column to store the merged cluster labels.
-
-    Returns
-    -------
-    AnnData
-        AnnData object with merged cluster labels.
-    """
-    if clusters_col not in adata.obs:
-        raise KeyError(f"'{clusters_col}' column not found in 'adata.obs'.")
-
-    # Replace old cluster labels with new ones
-    adata.obs[new_clusters_col] = adata.obs[clusters_col].replace(rename_dict)
-
-    # Ensure values are in the correct order
-    unique_values = sorted(adata.obs[new_clusters_col].unique())
-
-    # Create a mapping of old values to sequential integers
-    value_mapping = {old_value: new_value for new_value, old_value in enumerate(unique_values)}
-
-    # Map the new values back to the column
-    adata.obs[new_clusters_col] = adata.obs[new_clusters_col].map(value_mapping)
-
-    # Attempt to copy colors from the original column, if available
-    if f"{clusters_col}_colors" in adata.uns:
-        original_colors = adata.uns[f"{clusters_col}_colors"]
-
-        # Map colors to the new cluster order if possible
-        new_colors = [original_colors[value_mapping[old_value]] for old_value in unique_values]
-        adata.uns[f"{new_clusters_col}_colors"] = new_colors
-    else:
-        print(f"Warning: '{clusters_col}_colors' not found in 'adata.uns'. Colors not transferred.")
-
-    # Convert the new cluster column to integers, then back to strings
-    adata.obs[new_clusters_col] = adata.obs[new_clusters_col].astype(int).astype(str)
-
-    # Return the updated AnnData object
-    return adata
-
-def remove_spots(adata: AnnData, 
-                 type: str, 
-                 n_spots: int = 1, 
-                 x_minimo: Optional[int] = None, 
-                 x_maximo: Optional[int] = None, 
-                 y_minimo: Optional[int] = None, 
-                 y_maximo: Optional[int] = None, 
-                 invert_x: bool = False, 
-                 invert_y: bool = False):
-    """
-    Remove spots do objeto AnnData com base na posição espacial.
-
-    Parâmetros:
-    - adata: AnnData
-        Objeto contendo coordenadas espaciais em obsm["spatial"].
-    - type: str
-        Tipo de remoção ('y_max', 'y_min', 'x_max', 'x_min', 'y', 'x', 'all', 'lower', 'upper').
-    - n_spots: int, opcional (padrão: 1)
-        Número de spots a remover em cada critério.
-    - x_minimo: float, opcional (padrão: None)
-        Valor mínimo para a coordenada x.
-    - x_maximo: float, opcional (padrão: None)
-        Valor máximo para a coordenada x.
-    - y_minimo: float, opcional (padrão: None)
-        Valor mínimo para a coordenada y.
-    - y_maximo: float, opcional (padrão: None)
-        Valor máximo para a coordenada y.
-    - invert_x: bool, opcional (padrão: False)
-        Se True, inverte a seleção para x_minimo ou x_maximo.
-    - invert_y: bool, opcional (padrão: False)
-        Se True, inverte a seleção para y_minimo ou y_maximo.
-
-    Retorna:
-    - AnnData atualizado com os spots removidos.
-    """
-    spatial_coords = adata.obsm["spatial"]
-    n_obs = adata.n_obs
-
-    # Identificar os índices dos valores extremos
-    sorted_indices = {
-        "y_max": np.argsort(spatial_coords[:, 1])[-n_spots:],
-        "y_min": np.argsort(spatial_coords[:, 1])[:n_spots],
-        "x_max": np.argsort(spatial_coords[:, 0])[-n_spots:],
-        "x_min": np.argsort(spatial_coords[:, 0])[:n_spots]
-    }
-
-    # Criar máscara para manter todos os spots
-    mask = np.ones(n_obs, dtype=bool)
-
-    if type in sorted_indices:
-        mask[sorted_indices[type]] = False
-
-    elif type == "y":
-        mask[sorted_indices["y_max"]] = False
-        mask[sorted_indices["y_min"]] = False
-
-    elif type == "x":
-        mask[sorted_indices["x_max"]] = False
-        mask[sorted_indices["x_min"]] = False
-
-    elif type == "all":
-        for idx in sorted_indices.values():
-            mask[idx] = False
-
-    elif type in ("lower", "upper"):
-        # Filtrar por x_minimo e x_maximo
-        if x_minimo is not None and x_maximo is not None:
-            x_filter = (spatial_coords[:, 0] > x_minimo) & (spatial_coords[:, 0] < x_maximo)
-            if invert_x:
-                x_filter = ~x_filter
-
-        elif x_minimo is not None:
-            x_filter = spatial_coords[:, 0] > x_minimo
-            if invert_x:
-                x_filter = spatial_coords[:, 0] < x_minimo
-
-        elif x_maximo is not None:
-            x_filter = spatial_coords[:, 0] < x_maximo
-            if invert_x:
-                x_filter = spatial_coords[:, 0] > x_maximo
-
-        else:
-            x_filter = np.ones(n_obs, dtype=bool)
-
-        # Filtrar por y_minimo e y_maximo
-        if y_minimo is not None and y_maximo is not None:
-            y_filter = (spatial_coords[:, 1] > y_minimo) & (spatial_coords[:, 1] < y_maximo)
-            if invert_y:
-                y_filter = ~y_filter
-
-        elif y_minimo is not None:
-            y_filter = spatial_coords[:, 1] > y_minimo
-            if invert_y:
-                y_filter = spatial_coords[:, 1] < y_minimo
-
-        elif y_maximo is not None:
-            y_filter = spatial_coords[:, 1] < y_maximo
-            if invert_y:
-                y_filter = spatial_coords[:, 1] > y_maximo
-
-        else:
-            y_filter = np.ones(n_obs, dtype=bool)
-
-        combined_filter = x_filter & y_filter
-        filtered_coords = spatial_coords[combined_filter]
-        combined_idx = np.where(combined_filter)[0]
-
-        if len(filtered_coords) < n_spots:
-            raise ValueError(f"Apenas {len(filtered_coords)} spots disponíveis após filtragem, mas {n_spots} são necessários.")
-
-        y_max_idx_filtered = np.argsort(filtered_coords[:, 1])[-n_spots:] if type == "lower" else np.argsort(filtered_coords[:, 1])[:n_spots]
-        y_max_idx = combined_idx[y_max_idx_filtered]
-        mask[y_max_idx] = False
-
-    else:
-        raise ValueError(f"Tipo '{type}' inválido. Escolha entre {list(sorted_indices.keys()) + ['y', 'x', 'all', 'lower', 'upper']}.")
-
-    return adata[mask, :].copy()
-
-def Z_score_simple(df):# TODO
-    ...
-    # df = df[df["Neighbor_Cluster"] != df["Color_Code"]]
-    
-    # score = pd.DataFrame(df["combination"].value_counts()).reset_index()
-    # score.columns = ["combination", "count"]
-
-    # # 2. Calculando a proporção observada
-    # score["proportion_observed"] = score["count"] / score["count"].sum()
-
-    # # 3. Contagem de cada cluster individual
-    # cluster_counts = df["Color_Code"].value_counts()
-
-    # # 4. Frequência dos clusters
-    # cluster_frequencies = cluster_counts / cluster_counts.sum()
-
-    # # 5. Obter todas as combinações possíveis de clusters (excluindo pares iguais)
-    # clusters = cluster_counts.index.tolist()
-    # # Usando itertools.combinations (não combinations_with_replacement) para garantir que (c1, c2) != (c2, c1)
-    # combinacoes = list(itertools.combinations(clusters, 2))
-
-    # # 6. Calcular a proporção esperada para cada combinação
-    # proporcoes_esperadas = {}
-    # for c1, c2 in combinacoes:
-    #     chave = tuple(sorted((c1, c2)))
-    #     proporcoes_esperadas[chave] = 2 * cluster_frequencies[c1] * cluster_frequencies[c2]  # Sem pares iguais
-
-    # # 7. Converter as combinações e proporções esperadas para um DataFrame
-    # proporcoes_df = pd.DataFrame(list(proporcoes_esperadas.items()), columns=["combination", "proportion_expected"])
-
-    # # 8. Merge entre as contagens observadas e esperadas
-    # merged_ordered_df = pd.merge(score, proporcoes_df, on="combination", how="inner")
-
-    # # 9. Ajustando o número de vizinhos para o cálculo (assumindo 6 vizinhos em média por bola)
-    # average_neighbors = 6
-    # total_connections = len(df) * average_neighbors / 2  # Dividido por 2 para não contar conexões duplicadas
-
-    # # 10. Calcular a contagem esperada para cada combinação de acordo com o total de conexões
-    # merged_ordered_df["expected_count"] = merged_ordered_df["proportion_expected"] * total_connections
-    # merged_ordered_df["proportion_expected"] = merged_ordered_df["expected_count"] / merged_ordered_df["expected_count"].sum()
-
-    # # 11. Calculando o desvio padrão da contagem esperada usando a variável binomial
-    # merged_ordered_df["std_dev"] = np.sqrt((merged_ordered_df["proportion_expected"] * (1 - merged_ordered_df["proportion_expected"])) / len(df))
-
-    # # 12. Calculando o Z-score
-    # merged_ordered_df["Z_score"] = (merged_ordered_df["proportion_observed"] - merged_ordered_df["proportion_expected"]) / merged_ordered_df["std_dev"]
-
-    # # 13. todos os df em uma lista
-    # merges.append(merged_ordered_df)
-

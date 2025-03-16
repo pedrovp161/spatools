@@ -16,5 +16,5 @@ __all__ = [
     'convert_anndata_ens',
     'merge_clusters',
     "z_score",
-    process_image
+    "process_image"
 ]

@@ -2,12 +2,13 @@ import os
 import numpy as np
 import scanpy as sc
 import pandas as pd
+from copy import deepcopy
 from anndata import AnnData
-from collections import namedtuple
 import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D as _Line2D
+from collections import namedtuple
 import matplotlib.patches as _mpatches
-
+from matplotlib.lines import Line2D as _Line2D
+from matplotlib.colors import LinearSegmentedColormap
 
 
 ### deprecated
@@ -410,9 +411,75 @@ def plot_single_spatial_image(
             
         plt.show()
 
-def z_score(adata: AnnData):
-    ...
+def z_score_corr(adata: AnnData, cluster_col: str = "clusters", show = True, title: str = "Score Z das conexões"):
+    matrix_size = len(adata.obs[cluster_col].unique())
+    accumulation_matrix = np.zeros((matrix_size, matrix_size))
 
+    for key in adata.uns["correlation_matrix"].keys():
+        matrix = pd.DataFrame(adata.uns["correlation_matrix"][key])
+        if isinstance(matrix, pd.DataFrame):
+            rows, cols = matrix.index, matrix.columns
+            for i in rows:
+                for j in cols:
+                    accumulation_matrix[i, j] += matrix.loc[i, j] # faco o calculo do acumulado de cada linha e coluna
+        else:
+            print("FATAL ERROR")
+    # Calcular a média
+    # Dividir cada valor de accumulation_matrix pelo tamanho de corr_list
+    num_matrices = len(adata.uns["correlation_matrix"].keys())
+    average_matrix = accumulation_matrix / num_matrices
+
+    max = average_matrix.max().max()
+    min = average_matrix.min().min()
+    sum = -min + max
+    x=average_matrix.max().max()/sum
+    x
+
+    # Copiar a matriz de correlação
+    average_matrix = pd.DataFrame(average_matrix)
+    corr_matrix = deepcopy(average_matrix)
+
+    # Criar um cmap personalizado que tenha branco no zero
+    colors = [(0, 'blue'), (1-x, 'white'), (1, 'red')]  # cores azul -> branco -> vermelho
+    cmap = LinearSegmentedColormap.from_list('custom_bwr', colors)
+
+    # Converter a matriz de correlação em valores numéricos (caso ainda não estejam)
+    corr_matrix_numeric = corr_matrix.astype(float)
+
+    # Criar uma máscara para a parte inferior da matriz (somente parte superior visível)
+    mask = ~np.tril(np.ones_like(corr_matrix_numeric, dtype=bool))
+
+    # Criar o heatmap com matplotlib
+    plt.figure(figsize=(18, 12))
+
+    # Aplicar a máscara para ocultar a parte inferior da matriz
+    plt.imshow(np.ma.masked_where(mask, corr_matrix_numeric), cmap=cmap, interpolation='nearest', vmin=corr_matrix_numeric.min().min(), vmax=corr_matrix_numeric.max().max())
+
+    # Adicionar barra de cores (colorbar)
+    plt.colorbar()
+
+    # Adicionar os valores nas células (somente na parte visível)
+    for i in range(corr_matrix_numeric.shape[0]):
+        for j in range(i):  # Colocar valores apenas na parte inferior
+            if i != j:  # Excluir valores de clusters iguais
+                plt.text(j, i, f'{corr_matrix_numeric.iloc[i, j]:.2f}', 
+                        ha='center', va='center', color='black')
+
+    # Definir os ticks nos eixos x e y
+    plt.xticks(ticks=np.arange(len(corr_matrix.columns)), labels=corr_matrix.columns)
+    plt.yticks(ticks=np.arange(len(corr_matrix.index)), labels=corr_matrix.index)
+    plt.tick_params(axis="x", labelsize = 16)
+    plt.tick_params(axis="y", labelsize = 16)
+
+    # Adicionar título e rótulos dos eixos
+    plt.title(title, fontsize=25)
+    plt.xlabel('clusters eixo x', fontsize=20)
+    plt.ylabel('clusters eixo y', fontsize=20)
+
+    # Exibir o heatmap
+    if show:
+        plt.tight_layout()
+        plt.show()
 
 def extract_P_number(file_name: str) -> int:
     """Extracts the number after the 'P' in the file name."""
@@ -729,6 +796,3 @@ if __name__ == "__main__":
         # legend2_pos=(0.88, 0.25),
         **classification_dict #type: ignore
     )
-
-def Z_score_plot(Z_score, cluster_pair):# TODO
-    ...

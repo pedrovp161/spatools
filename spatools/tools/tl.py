@@ -16,12 +16,13 @@ from multiprocessing import Pool, cpu_count
 
 def spatools_check(adata):
     if "spatools" in adata.uns:
-        print("Reescrevendo análise antiga!")
-        i = input("Deseja proceder? [s ou n] ").strip().lower()
+        print("Overwriting old analysis!")
+        i = input("Do you want to proceed? [y or n] ").strip().lower()
         if i == "n":
-            raise Exception("Operação cancelada pelo usuário.")
-        elif i != "s":
-            raise Exception("Resposta inválida. Use 's' para sim ou 'n' para não.")
+            raise Exception("Operation canceled by the user.")
+        elif i != "y":
+            raise Exception("Invalid response. Use 'y' for yes or 'n' for no.")
+
 
 def mesure_distances(adata: AnnData, cluster_col: str):
     data = pd.DataFrame(adata.obsm["spatial"])

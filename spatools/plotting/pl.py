@@ -423,7 +423,7 @@ def z_score_corr(adata: AnnData, cluster_col: str = "clusters", show = True, tit
                 for j in cols:
                     accumulation_matrix[i, j] += matrix.loc[i, j] # faco o calculo do acumulado de cada linha e coluna
         else:
-            print("FATAL ERROR")
+            raise ValueError("Chaves dentro de adata.uns['correlation_matrix'] não são do tipo DataFrame")
     # Calcular a média
     # Dividir cada valor de accumulation_matrix pelo tamanho de corr_list
     num_matrices = len(adata.uns["correlation_matrix"].keys())

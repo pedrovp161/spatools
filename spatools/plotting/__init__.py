@@ -6,7 +6,7 @@ from .pl import (
     plot_spatial_clusters,
     plot_clusters_quality_violin_boxplot,
     outlier_quality,
-    Z_score_plot
+    z_score_corr
 )
 
 # Defina as funções que devem ser acessíveis a partir de 'plotting'
@@ -18,5 +18,5 @@ __all__ = [
     'plot_spatial_clusters',
     'plot_clusters_quality_violin_boxplot',
     'outlier_quality',
-    'Z_score_plot'
+    'z_score_corr'
 ]

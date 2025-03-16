@@ -3,7 +3,9 @@ from .tl import (
     remove_random_rows,
     convert_df_ens,
     convert_anndata_ens,
-    merge_clusters
+    merge_clusters,
+    correlate_distances,
+    z_score
 )
 
 __all__ = [
@@ -12,5 +14,7 @@ __all__ = [
     'convert_df_ens',
     'remove_random_rows',
     'convert_anndata_ens',
-    'merge_clusters'
+    'merge_clusters',
+    "z_score",
+    process_image
 ]

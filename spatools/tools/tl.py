@@ -56,7 +56,10 @@ def mesure_distances(adata: AnnData, cluster_col: str):
     
     return nearest_df
 
-def correlate_distances(adata: AnnData, is_concatenated=False, cluster_col: str = "cluster"):
+def correlate_distances(adata: AnnData, 
+                        is_concatenated=False, 
+                        cluster_col: str = "cluster", 
+                        batch_key: str = "batch"):
     """
     Calcula as distâncias entre pontos espaciais e armazena os vizinhos mais próximos dentro do threshold.
 
@@ -80,10 +83,10 @@ def correlate_distances(adata: AnnData, is_concatenated=False, cluster_col: str 
 
     if is_concatenated:
         merged_df = []
-        for batch in adata.obs["batch"].unique():
-            subset = adata[adata.obs["batch"] == batch].copy()
+        for i in adata.obs[batch_key].unique():
+            subset = adata[adata.obs[batch_key] == i].copy()
             nearest_df = mesure_distances(adata=subset, cluster_col=cluster_col)
-            nearest_df["batch"] = batch  # Adiciona a coluna de batch
+            nearest_df[batch_key] = i  # Adiciona a coluna de batch
             nearest_df["combination"] = nearest_df.apply(lambda row: tuple(sorted((int(row["color"]), int(row["color_neigh"])))), axis=1)
             merged_df.append(nearest_df)
 
@@ -93,7 +96,7 @@ def correlate_distances(adata: AnnData, is_concatenated=False, cluster_col: str 
     else:
         if "spatools" not in adata.uns:
             nearest_df = mesure_distances(adata=adata, cluster_col=cluster_col)
-            nearest_df["batch"] = batch  # Adiciona a coluna de batch
+            nearest_df[batch_key] = i  # Adiciona a coluna de batch
             nearest_df["combination"] = nearest_df.apply(lambda row: tuple(sorted((int(row["color"]), int(row["color_neigh"])))), axis=1)
             adata.uns["spatools"] = nearest_df
 
@@ -380,7 +383,10 @@ def remove_spots(adata: AnnData,
 
     return adata[mask, :].copy()
 
-def z_score(adata: AnnData, filter_column: str = None, filter_value: str = None):
+def z_score(adata: AnnData, 
+            filter_column: str = None, 
+            filter_value: str = None, 
+            batch_key: str = "batch"):
     # Verifica se a chave "spatools" existe em uns
     if "spatools" not in adata.uns:
         raise KeyError("A chave 'spatools' não foi encontrada em adata.uns")
@@ -396,8 +402,8 @@ def z_score(adata: AnnData, filter_column: str = None, filter_value: str = None)
 
     z_scores_by_batch = {}  # Armazena os resultados por batch
 
-    for batch in df["batch"].unique():
-        filtro_batch = df[df["batch"] == batch]  # Mantém filtro_batch intacto
+    for i in df[batch_key].unique():
+        filtro_batch = df[df[batch_key] == i]  # Mantém filtro_batch intacto
 
         # 1. Contagem de observações para cada combinação
         filtro_batch = filtro_batch[filtro_batch["color_neigh"] != filtro_batch["color"]]
@@ -449,7 +455,7 @@ def z_score(adata: AnnData, filter_column: str = None, filter_value: str = None)
         ) / merged_ordered_df["std_dev"]
 
         # 13. Armazena no dicionário
-        z_scores_by_batch[batch] = merged_ordered_df
+        z_scores_by_batch[i] = merged_ordered_df
 
     # 14. Armazena os resultados no AnnData
     adata.uns["z-score"] = z_scores_by_batch
@@ -487,7 +493,6 @@ def calculate_distances(args):
             if dist < threshold_distance:
                 data.append([x, y, color_center, x2, y2, dist])
     return data
-
 
 def process_image(input_image_path, 
                   output_dir: str, 

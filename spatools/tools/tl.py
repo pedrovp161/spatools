@@ -385,29 +385,28 @@ def remove_spots(adata: AnnData,
 
 def z_score(adata: AnnData, 
             filter_column: str = None, 
-            filter_value: str = None, 
-            batch_key: str = "batch"):
+            filter_value: str = None):
     # Verifica se a chave "spatools" existe em uns
     if "spatools" not in adata.uns:
         raise KeyError("A chave 'spatools' não foi encontrada em adata.uns")
-
+    
     # Verifica se a coluna existe
-    if filter_column and filter_column not in adata.uns["spatools"]:
-        raise ValueError(f"A coluna '{filter_column}' não existe em adata.uns['spatools']")
+    if filter_column:
+        if filter_column not in adata.uns["spatools"]:
+            raise ValueError(f"A coluna '{filter_column}' não existe em adata.uns['spatools']")
 
     # Filtra os dados, se necessário
     df = adata.uns["spatools"].copy()
     if filter_value is not None:
         df = df[df[filter_column] == filter_value]
 
-    z_scores_by_batch = {}  # Armazena os resultados por batch
+    merges = {}
 
-    for i in df[batch_key].unique():
-        filtro_batch = df[df[batch_key] == i]  # Mantém filtro_batch intacto
+    for i in df["batch"].unique():
+        filtro_batch = df[df["batch"] == i]
 
         # 1. Contagem de observações para cada combinação
         filtro_batch = filtro_batch[filtro_batch["color_neigh"] != filtro_batch["color"]]
-
         score = pd.DataFrame(filtro_batch["combination"].value_counts()).reset_index()
         score.columns = ["combination", "count"]
 
@@ -425,10 +424,7 @@ def z_score(adata: AnnData,
         combinacoes = list(itertools.combinations(clusters, 2))
 
         # 6. Calcular a proporção esperada para cada combinação
-        proporcoes_esperadas = {
-            tuple(sorted((int(c1), int(c2)))): 2 * cluster_frequencies[c1] * cluster_frequencies[c2]
-            for c1, c2 in combinacoes
-        }
+        proporcoes_esperadas = {tuple(sorted((int(c1), int(c2)))): 2 * cluster_frequencies[c1] * cluster_frequencies[c2] for c1, c2 in combinacoes}
 
         # 7. Converter para DataFrame
         proporcoes_df = pd.DataFrame(list(proporcoes_esperadas.items()), columns=["combination", "proportion_expected"])
@@ -445,22 +441,53 @@ def z_score(adata: AnnData,
         merged_ordered_df["proportion_expected"] = merged_ordered_df["expected_count"] / merged_ordered_df["expected_count"].sum()
 
         # 11. Cálculo do desvio padrão
-        merged_ordered_df["std_dev"] = np.sqrt(
-            (merged_ordered_df["proportion_expected"] * (1 - merged_ordered_df["proportion_expected"])) / len(filtro_batch)
-        )
+        merged_ordered_df["std_dev"] = np.sqrt((merged_ordered_df["proportion_expected"] * (1 - merged_ordered_df["proportion_expected"])) / len(filtro_batch))
 
         # 12. Calculando o Z-score
-        merged_ordered_df["Z_score"] = (
-            merged_ordered_df["proportion_observed"] - merged_ordered_df["proportion_expected"]
-        ) / merged_ordered_df["std_dev"]
+        merged_ordered_df["Z_score"] = (merged_ordered_df["proportion_observed"] - merged_ordered_df["proportion_expected"]) / merged_ordered_df["std_dev"]
 
-        # 13. Armazena no dicionário
-        z_scores_by_batch[i] = merged_ordered_df
+        # 13. Adicionando ao dicionário por batch
+        merges[i] = merged_ordered_df
 
-    # 14. Armazena os resultados no AnnData
-    adata.uns["z-score"] = z_scores_by_batch
+    # 14. Adicionando ao adata.uns como um dicionário
+    adata.uns["z-score"] = merges
+
+    # Criando a lista de matrizes de correlação por batch
+    corr_list = {}
+
+    for batch, merged_df in merges.items():
+        correlation_matrix = merged_df[["combination", 'Z_score']].copy()
+        
+        # Extrair os valores das tuplas para duas colunas separadas (a, b)
+        correlation_matrix[['a', 'b']] = pd.DataFrame(correlation_matrix['combination'].tolist(), index=correlation_matrix.index)
+
+        # Para tratar as combinações (a, b) e (b, a) como equivalentes
+        correlation_matrix['a'], correlation_matrix['b'] = np.minimum(correlation_matrix['a'], correlation_matrix['b']), np.maximum(correlation_matrix['a'], correlation_matrix['b'])
+
+        # Criar a matriz de correlação
+        unique_values = sorted(set(correlation_matrix['a']).union(set(correlation_matrix['b'])))
+        corr_matrix = pd.DataFrame(index=unique_values, columns=unique_values)
+
+        # Preencher a matriz de correlação com os Z_scores
+        for i in unique_values:
+            for j in unique_values:
+                if i <= j:  
+                    z_score = correlation_matrix[((correlation_matrix['a'] == i) & (correlation_matrix['b'] == j)) | ((correlation_matrix['a'] == j) & (correlation_matrix['b'] == i))]['Z_score']
+                    if not z_score.empty:
+                        corr_matrix.loc[i, j] = z_score.values[0]
+                        corr_matrix.loc[j, i] = z_score.values[0]
+
+        # Preencher valores NaN com 0
+        corr_matrix.fillna(0, inplace=True)
+
+        # Salvar no dicionário de correlações
+        corr_list[batch] = corr_matrix
+
+    # Adicionando ao adata.uns
+    adata.uns["correlation_matrix"] = corr_list
 
     return adata
+
 
 
 # deprecated

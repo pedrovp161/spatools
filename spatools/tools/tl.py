@@ -385,7 +385,8 @@ def remove_spots(adata: AnnData,
 
 def z_score(adata: AnnData, 
             filter_column: str = None, 
-            filter_value: str = None):
+            filter_value: str = None,
+            batch_key: str = "batch"):
     # Verifica se a chave "spatools" existe em uns
     if "spatools" not in adata.uns:
         raise KeyError("A chave 'spatools' não foi encontrada em adata.uns")
@@ -402,8 +403,8 @@ def z_score(adata: AnnData,
 
     merges = {}
 
-    for i in df["batch"].unique():
-        filtro_batch = df[df["batch"] == i]
+    for i in df[batch_key].unique():
+        filtro_batch = df[df[batch_key] == i]
 
         # 1. Contagem de observações para cada combinação
         filtro_batch = filtro_batch[filtro_batch["color_neigh"] != filtro_batch["color"]]
@@ -487,7 +488,6 @@ def z_score(adata: AnnData,
     adata.uns["correlation_matrix"] = corr_list
 
     return adata
-
 
 
 # deprecated

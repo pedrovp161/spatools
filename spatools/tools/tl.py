@@ -56,6 +56,40 @@ def mesure_distances(adata: AnnData, cluster_col: str):
     
     return nearest_df
 
+def check_distances(adata: AnnData,
+                    batch_key: str = "batch",
+                    spatools_key: str = "spatools"):
+    # Inicializa o dicionário se não existir
+    if "check_distances" not in adata.uns:
+        adata.uns["check_distances"] = {}
+
+    # Itera por cada batch
+    if spatools_key in adata.uns and "point_name" in adata.uns[spatools_key]:
+        for i in adata.obs[batch_key].unique():
+            subset = adata.uns[spatools_key][adata.uns[spatools_key][batch_key] == i]
+            counts = subset["point_name"].value_counts()
+            adata.uns["check_distances"][i] = counts
+    else:
+        raise KeyError(f"Chave '{spatools_key}' ou 'point_name' não encontrada no subset para o batch '{i}'.") 
+
+    # Now I will check the number of spots
+    adata.uns["check_spots"] = {}
+    for i in adata.uns["check_distances"]:
+        adata.uns["check_spots"][i] = len(adata.uns["check_distances"][i])
+
+    # Now I will check the number of spots analysed and compare with the number of spots in real object
+    df = pd.DataFrame()
+    for key, value in adata.uns["check_spots"].items():
+        df.index = ["spots_analysed"]
+        df[key] = value
+    df = df.T
+    df["total_spots_anndata"] = pd.concat([df, pd.DataFrame(adata.obs[batch_key].value_counts())] ,axis=1)["count"]
+    df["percentage"] = df["spots_analysed"] / df["total_spots_anndata"] * 100
+
+    adata.uns["check_spots"] = df
+
+    return adata
+
 def correlate_distances(adata: AnnData, 
                         is_concatenated=False, 
                         cluster_col: str = "cluster", 
@@ -75,7 +109,8 @@ def correlate_distances(adata: AnnData,
     Returns
     -------
     adata : AnnData
-        O objeto AnnData com os vizinhos mais próximos armazenados em `uns["spatools"]`.
+        O objeto AnnData com os vizinhos mais próximos armazenados em `uns["spatools"]` e
+          a porcentagem de spots analisados do total no objeto anndata em `uns["check_spots"]`.
     """
     
     # Verificando se a análise já foi feita
@@ -99,6 +134,8 @@ def correlate_distances(adata: AnnData,
             nearest_df[batch_key] = i  # Adiciona a coluna de batch
             nearest_df["combination"] = nearest_df.apply(lambda row: tuple(sorted((int(row["color"]), int(row["color_neigh"])))), axis=1)
             adata.uns["spatools"] = nearest_df
+
+    adata = check_distances(adata, batch_key="batch", spatools_key="spatools")
 
     return adata
 
@@ -428,29 +465,32 @@ def z_score(adata: AnnData,
         proporcoes_esperadas = {tuple(sorted((int(c1), int(c2)))): 2 * cluster_frequencies[c1] * cluster_frequencies[c2] for c1, c2 in combinacoes}
 
         # 7. Converter para DataFrame
-        proporcoes_df = pd.DataFrame(list(proporcoes_esperadas.items()), columns=["combination", "proportion_expected"])
+        proporcoes_esperadas_df = pd.DataFrame(list(proporcoes_esperadas.items()), columns=["combination", "proportion_expected"])
 
         # 8. Merge entre as contagens observadas e esperadas
-        merged_ordered_df = pd.merge(score, proporcoes_df, on="combination", how="inner")
+        merged_ordered_df = pd.merge(score, proporcoes_esperadas_df, on="combination", how="outer")
 
-        # 9. Ajustando o número de vizinhos
-        average_neighbors = 6
-        total_connections = len(filtro_batch) * average_neighbors / 2 
+        # 9. Preenchendo NaN com 0 TODO
+        merged_ordered_df.fillna(0, inplace=True)
 
-        # 10. Contagem esperada
-        merged_ordered_df["expected_count"] = merged_ordered_df["proportion_expected"] * total_connections
-        merged_ordered_df["proportion_expected"] = merged_ordered_df["expected_count"] / merged_ordered_df["expected_count"].sum()
+        # x. Ajustando o número de vizinhos #### TODO REMOVED
+        # average_neighbors = 6
+        # total_connections = len(filtro_batch) * average_neighbors / 2 
 
-        # 11. Cálculo do desvio padrão
+        # xx. Contagem esperada #### TODO REMOVED
+        # merged_ordered_df["expected_count"] = merged_ordered_df["proportion_expected"] * total_connections
+        # merged_ordered_df["proportion_expected"] = merged_ordered_df["expected_count"] / merged_ordered_df["expected_count"].sum()
+
+        # 10. Cálculo do desvio padrão
         merged_ordered_df["std_dev"] = np.sqrt((merged_ordered_df["proportion_expected"] * (1 - merged_ordered_df["proportion_expected"])) / len(filtro_batch))
 
-        # 12. Calculando o Z-score
+        # 11. Calculando o Z-score
         merged_ordered_df["Z_score"] = (merged_ordered_df["proportion_observed"] - merged_ordered_df["proportion_expected"]) / merged_ordered_df["std_dev"]
 
-        # 13. Adicionando ao dicionário por batch
+        # 12. Adicionando ao dicionário por batch
         merges[i] = merged_ordered_df
 
-    # 14. Adicionando ao adata.uns como um dicionário
+    # 13. Adicionando ao adata.uns como um dicionário
     adata.uns["z-score"] = merges
 
     # Criando a lista de matrizes de correlação por batch

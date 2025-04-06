@@ -411,12 +411,32 @@ def plot_single_spatial_image(
             
         plt.show()
 
-def z_score_corr(adata: AnnData, cluster_col: str = "clusters", show = True, title: str = "Score Z das conexões"):
-    matrix_size = len(adata.obs[cluster_col].unique())
+def z_score_matrixplot(adata: AnnData, 
+                       show = True, 
+                       title: str = "Score Z das conexões"
+                       ):
+    # checks iniciais
+    if "zscore_matrix" not in adata.uns:
+        raise KeyError("'zscore_matrix' key was not found in adata.uns")
+    if not isinstance(adata.uns["zscore_matrix"], dict):
+        raise ValueError("'zscore_matrix' is not a dictionary")
+    
+    # definindo matrix_size
+    matrix_size = 0
+    for i in adata.uns["zscore_matrix"].keys():
+        if matrix_size == 0: # primeira iteração
+            matrix_size = len(adata.uns["zscore_matrix"][i])
+
+        elif matrix_size < len(adata.uns["zscore_matrix"][i]):# quando for maior
+            matrix_size = len(adata.uns["zscore_matrix"][i])
+        else: # quando for menor
+            pass
+
+    # Criando a matriz de zeros
     accumulation_matrix = np.zeros((matrix_size, matrix_size))
 
-    for key in adata.uns["correlation_matrix"].keys():
-        matrix = pd.DataFrame(adata.uns["correlation_matrix"][key])
+    for key in adata.uns["zscore_matrix"].keys():
+        matrix = pd.DataFrame(adata.uns["zscore_matrix"][key])
         if isinstance(matrix, pd.DataFrame):
             rows, cols = matrix.index, matrix.columns
             for i in rows:
@@ -424,9 +444,9 @@ def z_score_corr(adata: AnnData, cluster_col: str = "clusters", show = True, tit
                     accumulation_matrix[i, j] += matrix.loc[i, j] # faco o calculo do acumulado de cada linha e coluna
         else:
             raise ValueError("Chaves dentro de adata.uns['correlation_matrix'] não são do tipo DataFrame")
-    # Calcular a média
+
     # Dividir cada valor de accumulation_matrix pelo tamanho de corr_list
-    num_matrices = len(adata.uns["correlation_matrix"].keys())
+    num_matrices = len(adata.uns["zscore_matrix"].keys())
     average_matrix = accumulation_matrix / num_matrices
 
     max = average_matrix.max().max()
@@ -453,7 +473,9 @@ def z_score_corr(adata: AnnData, cluster_col: str = "clusters", show = True, tit
     plt.figure(figsize=(18, 12))
 
     # Aplicar a máscara para ocultar a parte inferior da matriz
-    plt.imshow(np.ma.masked_where(mask, corr_matrix_numeric), cmap=cmap, interpolation='nearest', vmin=corr_matrix_numeric.min().min(), vmax=corr_matrix_numeric.max().max())
+    plt.imshow(np.ma.masked_where(mask, corr_matrix_numeric), cmap=cmap, 
+               interpolation='nearest', vmin=corr_matrix_numeric.min().min(), 
+               vmax=corr_matrix_numeric.max().max())
 
     # Adicionar barra de cores (colorbar)
     plt.colorbar()

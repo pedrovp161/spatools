@@ -11,71 +11,6 @@ from matplotlib.lines import Line2D as _Line2D
 from matplotlib.colors import LinearSegmentedColormap
 
 
-### deprecated
-def plot_bar_by_batch(adata: AnnData, clusters_col: str) -> None:
-    # Verificar se cluster_col está em adata.obs
-    if clusters_col not in adata.obs.columns:
-        raise ValueError(f"A coluna '{clusters_col}' não está em adata.obs")
-    
-    # Verificar se as cores estão definidas em adata.uns
-    color_key = f"{clusters_col}_colors"
-    if color_key not in adata.uns:
-        raise ValueError(f"As cores para '{clusters_col}' não estão definidas em adata.uns['{color_key}']")
-    
-    # Obter as cores dos clusters
-    cluster_colors = adata.uns[color_key]
-
-    # Agrupar dados por batch e clusters_col
-    count_data = adata.obs.groupby(['batch', clusters_col]).size().unstack(fill_value=0)
-
-    # Calcular a porcentagem
-    percentage_data = count_data.div(count_data.sum(axis=1), axis=0) * 100#type: ignore
-
-    # Definir cores usando a paleta de cores do AnnData
-    cluster_labels = percentage_data.columns
-    colors = [cluster_colors[int(label)] for label in cluster_labels]
-
-    # Plotar gráfico de barras empilhadas
-    ax = percentage_data.plot(kind='bar', stacked=True, figsize=(12, 6), color=colors)
-    ax.set_title(f'Porcentagem de clusters em {clusters_col} para cada amostra', fontsize=25)
-    ax.set_xlabel('Amostras', fontsize=25)
-    ax.set_ylabel('Porcentagem (%)', fontsize=25)
-    ax.set_xticklabels(ax.get_xticklabels(), fontsize=14)
-    ax.legend(title="clusters", ncol=2, loc="right", bbox_to_anchor=(1.17, 0.5))
-    plt.tight_layout()
-    plt.show()
-
-
-def plot_bar_by_group(adata: AnnData, clusters_col: str = "leiden_0.5") -> None:
-    # Verificar se a coluna 'response' está em adata.obs
-    if 'response' not in adata.obs.columns:
-        raise ValueError("A coluna 'response' não está em bdata.obs")
-    
-    # Agrupar dados por response e cluster_col
-    count_data = adata.obs.groupby(['response', clusters_col]).size().unstack(fill_value=0)
-
-    # Reordenar as colunas na ordem GR, PR, BR
-    count_data = count_data.reindex(['GOR', 'PAR', 'POR'])
-
-    # Calcular a porcentagem
-    percentage_data = count_data.div(count_data.sum(axis=1), axis=0) * 100#type: ignore
-
-    # Definir as cores para os batches (opcional: pode ser ajustado conforme necessário)
-    batch_colors = adata.uns[clusters_col + "_colors"]
-    batch_labels = percentage_data.columns
-    colors = [batch_colors[i % len(batch_colors)] for i in range(len(batch_labels))]
-
-    # Plotar gráfico de barras empilhadas
-    ax = percentage_data.plot(kind='bar', stacked=True, figsize=(12, 6), color=colors)
-    ax.set_title('Porcentagem clusters por tipo de resposta', fontsize=25)
-    ax.set_xlabel('Tipo de resposta', fontsize=25)
-    ax.set_ylabel('Porcentagem (%)', fontsize=25)
-    ax.set_xticklabels(ax.get_xticklabels(), fontsize=14, rotation=0)
-    ax.legend(title='Clusters', ncol=2, loc="right", bbox_to_anchor=(1.17, 0.5))
-    plt.tight_layout()
-    plt.show()
-### deprecated
-
 def plot_bar(
         adata: AnnData, 
         clusters_col: str, 
@@ -776,6 +711,69 @@ def outlier_quality(
     fig.tight_layout()
     plt.show()
 
+
+### deprecated
+def plot_bar_by_batch(adata: AnnData, clusters_col: str) -> None:
+    # Verificar se cluster_col está em adata.obs
+    if clusters_col not in adata.obs.columns:
+        raise ValueError(f"A coluna '{clusters_col}' não está em adata.obs")
+    
+    # Verificar se as cores estão definidas em adata.uns
+    color_key = f"{clusters_col}_colors"
+    if color_key not in adata.uns:
+        raise ValueError(f"As cores para '{clusters_col}' não estão definidas em adata.uns['{color_key}']")
+    
+    # Obter as cores dos clusters
+    cluster_colors = adata.uns[color_key]
+
+    # Agrupar dados por batch e clusters_col
+    count_data = adata.obs.groupby(['batch', clusters_col]).size().unstack(fill_value=0)
+
+    # Calcular a porcentagem
+    percentage_data = count_data.div(count_data.sum(axis=1), axis=0) * 100#type: ignore
+
+    # Definir cores usando a paleta de cores do AnnData
+    cluster_labels = percentage_data.columns
+    colors = [cluster_colors[int(label)] for label in cluster_labels]
+
+    # Plotar gráfico de barras empilhadas
+    ax = percentage_data.plot(kind='bar', stacked=True, figsize=(12, 6), color=colors)
+    ax.set_title(f'Porcentagem de clusters em {clusters_col} para cada amostra', fontsize=25)
+    ax.set_xlabel('Amostras', fontsize=25)
+    ax.set_ylabel('Porcentagem (%)', fontsize=25)
+    ax.set_xticklabels(ax.get_xticklabels(), fontsize=14)
+    ax.legend(title="clusters", ncol=2, loc="right", bbox_to_anchor=(1.17, 0.5))
+    plt.tight_layout()
+    plt.show()
+
+def plot_bar_by_group(adata: AnnData, clusters_col: str = "leiden_0.5") -> None:
+    # Verificar se a coluna 'response' está em adata.obs
+    if 'response' not in adata.obs.columns:
+        raise ValueError("A coluna 'response' não está em bdata.obs")
+    
+    # Agrupar dados por response e cluster_col
+    count_data = adata.obs.groupby(['response', clusters_col]).size().unstack(fill_value=0)
+
+    # Reordenar as colunas na ordem GR, PR, BR
+    count_data = count_data.reindex(['GOR', 'PAR', 'POR'])
+
+    # Calcular a porcentagem
+    percentage_data = count_data.div(count_data.sum(axis=1), axis=0) * 100#type: ignore
+
+    # Definir as cores para os batches (opcional: pode ser ajustado conforme necessário)
+    batch_colors = adata.uns[clusters_col + "_colors"]
+    batch_labels = percentage_data.columns
+    colors = [batch_colors[i % len(batch_colors)] for i in range(len(batch_labels))]
+
+    # Plotar gráfico de barras empilhadas
+    ax = percentage_data.plot(kind='bar', stacked=True, figsize=(12, 6), color=colors)
+    ax.set_title('Porcentagem clusters por tipo de resposta', fontsize=25)
+    ax.set_xlabel('Tipo de resposta', fontsize=25)
+    ax.set_ylabel('Porcentagem (%)', fontsize=25)
+    ax.set_xticklabels(ax.get_xticklabels(), fontsize=14, rotation=0)
+    ax.legend(title='Clusters', ncol=2, loc="right", bbox_to_anchor=(1.17, 0.5))
+    plt.tight_layout()
+    plt.show()
 
 if __name__ == "__main__":
     # example of use:

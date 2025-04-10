@@ -56,7 +56,7 @@ def mesure_distances(adata: AnnData, cluster_col: str):
     
     return nearest_df
 
-def check_distances(adata: AnnData,
+def check_spots_analysed(adata: AnnData,
                     batch_key: str = "batch",
                     spatools_key: str = "spatools"):
     # Inicializa o dicionário se não existir
@@ -135,7 +135,7 @@ def correlate_distances(adata: AnnData,
             nearest_df["combination"] = nearest_df.apply(lambda row: tuple(sorted((int(row["color"]), int(row["color_neigh"])))), axis=1)
             adata.uns["spatools"] = nearest_df
 
-    adata = check_distances(adata, batch_key="batch", spatools_key="spatools")
+    adata = check_spots_analysed(adata, batch_key="batch", spatools_key="spatools")
 
     return adata
 

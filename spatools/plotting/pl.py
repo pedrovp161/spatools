@@ -2,12 +2,15 @@ import os
 import numpy as np
 import scanpy as sc
 import pandas as pd
+import seaborn as sns
 from copy import deepcopy
 from anndata import AnnData
 import matplotlib.pyplot as plt
 from collections import namedtuple
+from scipy.stats import norm
 import matplotlib.patches as _mpatches
 from matplotlib.lines import Line2D as _Line2D
+from statsmodels.stats.multitest import multipletests
 from matplotlib.colors import LinearSegmentedColormap
 
 
@@ -434,6 +437,83 @@ def z_score_matrixplot(adata: AnnData,
     plt.ylabel('clusters eixo y', fontsize=20)
 
     # Exibir o heatmap
+    if show:
+        plt.tight_layout()
+        plt.show()
+
+def boxplot_cluster_correlations(adata: AnnData, 
+                                 cluster_col: str = "clusters", 
+                                 show=True, 
+                                 title: str = "Boxplot Horizontal das Correlações entre Clusters", 
+                                 subset: bool = False, 
+                                 value: int = None
+                                 ):
+    """
+    Função para gerar um boxplot horizontal com base nas correlações entre clusters (sem duplicação de pares simétricos).
+    
+    Parâmetros:
+        adata: AnnData - Objeto com os dados
+        cluster_col: str - Nome da coluna que contém as labels dos clusters
+        show: bool - Se True, exibe o plot
+        title: str - Título do gráfico
+    """
+
+    # Verificar se adata.uns["correlation_matrix"] contém os dados esperados
+    if "zscore_matrix" not in adata.uns:
+        raise ValueError("adata.uns não contém a chave 'zscore_matrix'.")
+
+    # Preparar os dados para o boxplot
+    boxplot_data = []
+    samples = adata.uns["zscore_matrix"].keys()
+
+    for sample in samples:
+        matrix = adata.uns["zscore_matrix"][sample]
+        if not isinstance(matrix, pd.DataFrame):
+            raise ValueError(f"A matriz de correlação da amostra '{sample}' não é do tipo DataFrame.")
+        
+        for i in range(len(matrix)):
+            for j in range(i + 1, len(matrix)):  # Evitar duplicar pares simétricos
+                if subset:
+                    if i == value or j == value:
+                        boxplot_data.append({"Cluster Pair": f"{i}-{j}", "Correlation": matrix.iloc[i, j]})
+                else:
+                    boxplot_data.append({"sample_key": sample, "Cluster Pair": f"{i}-{j}", "Correlation": matrix.iloc[i, j]})
+
+    # Criar DataFrame com os dados
+    final_data = pd.DataFrame(boxplot_data)
+
+    # z-score para p-valor bicaudal
+    final_data["pval"] = 2 * norm.sf(np.abs(final_data["Correlation"]))
+
+    # Correção de FDR usando Benjamini-Hochberg
+    reject, pvals_corr, _, _ = multipletests(final_data["pval"], method='fdr_bh')
+    final_data["FDR_pval"] = pvals_corr
+    final_data["significant"] = reject
+
+    # significativos = [final_data["FDR_pval"] < 0.05]
+    # final_data["significant"] = significativos
+    adata.uns["significativos"] = final_data
+
+    # Criar o boxplot horizontal
+    plt.figure(figsize=(12, 16))
+
+    # Boxplot
+    sns.boxplot(x="Correlation", y="Cluster Pair", data=final_data, hue="Cluster Pair", palette="Set3", orient="h", legend=False)
+
+    # Adicionar área sombreada para região não-significativa (entre -1.96 e +1.96)
+    plt.axvspan(-1.96, 1.96, color='gray', alpha=0.2, label='Não Significativo (|z| < 1.96)')
+
+    # Linha preta central
+    plt.axvline(x=0, color='black', linestyle='--', linewidth=2, alpha=0.5)
+
+    # Personalização
+    plt.title(title, fontsize=20)
+    plt.xlabel("Valores de z-score", fontsize=15)
+    plt.ylabel("Par de Clusters", fontsize=15)
+    plt.xticks(fontsize=12)
+    plt.yticks(fontsize=12)
+    plt.legend()
+
     if show:
         plt.tight_layout()
         plt.show()

@@ -23,7 +23,6 @@ def spatools_check(adata):
         elif i != "y":
             raise Exception("Invalid response. Use 'y' for yes or 'n' for no.")
 
-
 def mesure_distances(adata: AnnData, cluster_col: str):
     data = pd.DataFrame(adata.obsm["spatial"])
     data[cluster_col] = adata.obs[cluster_col].values
@@ -50,9 +49,9 @@ def mesure_distances(adata: AnnData, cluster_col: str):
     for i in range(len(points)):
         neighbors = np.where(mask[i])[0]  # Índices dos pontos dentro do threshold
         for j in neighbors:
-            nearest_points.append([x[i], y[i], colors[i], x[j], y[j], colors[j], dist_matrix[i, j]])
+            nearest_points.append([x[i], y[i],f"{x[i]}_{y[i]}" ,colors[i], x[j], y[j], colors[j], dist_matrix[i, j]])
 
-    nearest_df = pd.DataFrame(nearest_points, columns=["x", "y", "color", "x_neigh", "y_neigh", "color_neigh", "distance"])
+    nearest_df = pd.DataFrame(nearest_points, columns=["x", "y","point_name" ,"color", "x_neigh", "y_neigh", "color_neigh", "distance"])
     
     return nearest_df
 
@@ -64,13 +63,16 @@ def check_spots_analysed(adata: AnnData,
         adata.uns["check_distances"] = {}
 
     # Itera por cada batch
-    if spatools_key in adata.uns and "point_name" in adata.uns[spatools_key]:
-        for i in adata.obs[batch_key].unique():
-            subset = adata.uns[spatools_key][adata.uns[spatools_key][batch_key] == i]
-            counts = subset["point_name"].value_counts()
-            adata.uns["check_distances"][i] = counts
+    if spatools_key in adata.uns:
+        if "point_name" in adata.uns[spatools_key]:
+            for i in adata.obs[batch_key].unique():
+                subset = adata.uns[spatools_key][adata.uns[spatools_key][batch_key] == i]
+                counts = subset["point_name"].value_counts()
+                adata.uns["check_distances"][i] = counts
+        else:
+            raise KeyError(f"key 'point_name' not found inside any of the subsets.")
     else:
-        raise KeyError(f"Chave '{spatools_key}' ou 'point_name' não encontrada no subset para o batch '{i}'.") 
+        raise KeyError(f"Dict '{spatools_key}' not found inside adata.uns.") 
 
     # Now I will check the number of spots
     adata.uns["check_spots"] = {}
@@ -494,38 +496,38 @@ def z_score(adata: AnnData,
     adata.uns["z-score"] = merges
 
     # Criando a lista de matrizes de correlação por batch
-    corr_list = {}
+    z_list = {}
 
     for batch, merged_df in merges.items():
-        correlation_matrix = merged_df[["combination", 'Z_score']].copy()
+        zscore_matrix = merged_df[["combination", 'Z_score']].copy()
         
         # Extrair os valores das tuplas para duas colunas separadas (a, b)
-        correlation_matrix[['a', 'b']] = pd.DataFrame(correlation_matrix['combination'].tolist(), index=correlation_matrix.index)
+        zscore_matrix[['a', 'b']] = pd.DataFrame(zscore_matrix['combination'].tolist(), index=zscore_matrix.index)
 
         # Para tratar as combinações (a, b) e (b, a) como equivalentes
-        correlation_matrix['a'], correlation_matrix['b'] = np.minimum(correlation_matrix['a'], correlation_matrix['b']), np.maximum(correlation_matrix['a'], correlation_matrix['b'])
+        zscore_matrix['a'], zscore_matrix['b'] = np.minimum(zscore_matrix['a'], zscore_matrix['b']), np.maximum(zscore_matrix['a'], zscore_matrix['b'])
 
         # Criar a matriz de correlação
-        unique_values = sorted(set(correlation_matrix['a']).union(set(correlation_matrix['b'])))
-        corr_matrix = pd.DataFrame(index=unique_values, columns=unique_values)
+        unique_values = sorted(set(zscore_matrix['a']).union(set(zscore_matrix['b'])))
+        z_matrix = pd.DataFrame(index=unique_values, columns=unique_values)
 
         # Preencher a matriz de correlação com os Z_scores
         for i in unique_values:
             for j in unique_values:
                 if i <= j:  
-                    z_score = correlation_matrix[((correlation_matrix['a'] == i) & (correlation_matrix['b'] == j)) | ((correlation_matrix['a'] == j) & (correlation_matrix['b'] == i))]['Z_score']
+                    z_score = zscore_matrix[((zscore_matrix['a'] == i) & (zscore_matrix['b'] == j)) | ((zscore_matrix['a'] == j) & (zscore_matrix['b'] == i))]['Z_score']
                     if not z_score.empty:
-                        corr_matrix.loc[i, j] = z_score.values[0]
-                        corr_matrix.loc[j, i] = z_score.values[0]
+                        z_matrix.loc[i, j] = z_score.values[0]
+                        z_matrix.loc[j, i] = z_score.values[0]
 
         # Preencher valores NaN com 0
-        corr_matrix.fillna(0, inplace=True)
+        z_matrix.fillna(0, inplace=True)
 
         # Salvar no dicionário de correlações
-        corr_list[batch] = corr_matrix
+        z_list[batch] = z_matrix
 
     # Adicionando ao adata.uns
-    adata.uns["correlation_matrix"] = corr_list
+    adata.uns["zscore_matrix"] = z_list
 
     return adata
 

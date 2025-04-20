@@ -500,8 +500,15 @@ def boxplot_cluster_correlations(adata: AnnData,
     # Boxplot
     sns.boxplot(x="Correlation", y="Cluster Pair", data=final_data, hue="Cluster Pair", palette="Set3", orient="h", legend=False)
 
-    # Adicionar área sombreada para região não-significativa (entre -1.96 e +1.96)
-    plt.axvspan(-1.96, 1.96, color='gray', alpha=0.2, label='Não Significativo (|z| < 1.96)')
+    # Adicionar área sombreada para região não-significativa: Correção de borrefeni
+    num_comparisons = len(final_data["Cluster Pair"].unique())
+    bonferroni_threshold = 1 - (0.05 / (num_comparisons))  # Ajuste do limiar
+
+    # agora calcular a q_normal
+    # Calcular o valor crítico da distribuição normal (q_normal)
+    q_normal = norm.ppf(bonferroni_threshold)
+
+    plt.axvspan(-q_normal, q_normal, color='gray', alpha=0.2, label='Não Significativo (|z| < 1.96)')
 
     # Linha preta central
     plt.axvline(x=0, color='black', linestyle='--', linewidth=2, alpha=0.5)

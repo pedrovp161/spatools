@@ -15,7 +15,7 @@ DESCRIPTION = 'This comprehensive toolkit enables the analysis of multiple spati
 setup(
     name="spatools",
     version=VERSION,
-    author="Pedro Videira Pinho",
+    author=["Pedro Videira Pinho", "Mariana Boroni"],
     author_email="pedrovp161@gmail.com",
     description=DESCRIPTION,
     long_description_content_type="text/markdown",

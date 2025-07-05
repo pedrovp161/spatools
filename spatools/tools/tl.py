@@ -65,10 +65,20 @@ def check_spots_analysed(adata: AnnData,
     # Itera por cada batch
     if spatools_key in adata.uns:
         if "point_name" in adata.uns[spatools_key]:
-            for i in adata.obs[batch_key].unique():
-                subset = adata.uns[spatools_key][adata.uns[spatools_key][batch_key] == i]
-                counts = subset["point_name"].value_counts()
-                adata.uns["check_distances"][i] = counts
+            try:
+                if len((adata.obs[batch_key]).unique()) != 1:
+                    for i in adata.obs[batch_key].unique():
+                        subset = adata.uns[spatools_key][adata.uns[spatools_key][batch_key] == i]
+                        counts = subset["point_name"].value_counts()
+                        adata.uns["check_distances"][i] = counts
+
+                elif len((adata.obs[batch_key]).unique()) == 1:
+                    counts = adata.uns[spatools_key]["point_name"].value_counts()
+                    adata.uns["check_distances"][adata.obs[batch_key].unique()[0]]
+                else: print("Erro inesperado")
+            except KeyError:
+                counts = adata.uns[spatools_key]["point_name"].value_counts()
+                adata.uns["check_distances"]["Sample"] = counts
         else:
             raise KeyError(f"key 'point_name' not found inside any of the subsets.")
     else:
@@ -85,7 +95,10 @@ def check_spots_analysed(adata: AnnData,
         df.index = ["spots_analysed"]
         df[key] = value
     df = df.T
-    df["total_spots_anndata"] = pd.concat([df, pd.DataFrame(adata.obs[batch_key].value_counts())] ,axis=1)["count"]
+    try:
+        df["total_spots_anndata"] = pd.concat([df, pd.DataFrame(adata.obs[batch_key].value_counts())] ,axis=1)["count"]
+    except KeyError: 
+        df["total_spots_anndata"] = adata.n_obs
     df["percentage"] = df["spots_analysed"] / df["total_spots_anndata"] * 100
 
     adata.uns["check_spots"] = df
@@ -132,8 +145,7 @@ def correlate_distances(adata: AnnData,
 
     else:
         if "spatools" not in adata.uns:
-            nearest_df = mesure_distances(adata=adata, cluster_col=cluster_col)
-            nearest_df[batch_key] = i  # Adiciona a coluna de batch
+            nearest_df = mesure_distances(adata=adata, cluster_col=cluster_col)  # Adiciona a coluna de batch
             nearest_df["combination"] = nearest_df.apply(lambda row: tuple(sorted((int(row["color"]), int(row["color_neigh"])))), axis=1)
             adata.uns["spatools"] = nearest_df
 

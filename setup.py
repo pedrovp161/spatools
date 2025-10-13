@@ -6,7 +6,7 @@ import os
 with open('README.md', 'r', encoding='utf-8') as arq:
     readme = arq.read()
 
-install_requires = "opencv-python>=4.9.0.80", "scanpy>=1.10.1", "scikit-image>=0.24.0"
+install_requires = "scanpy>=1.10.1"
 
 VERSION = '0.0.83'
 DESCRIPTION = 'This comprehensive toolkit enables the analysis of multiple spatial transcriptomics datasets, offering a wide range of analytical capabilities. It supports various types of analyses, including detailed plotting and advanced image analysis, to help you gain deeper insights into your spatial transcriptomics data.'
@@ -26,8 +26,8 @@ setup(
     extras_require={  # Dependências opcionais para desenvolvimento
         "dev": ["twine>=5.1.1"]
     },
-    keywords=['python', 'Spatial transcriptomics', 'Spatial', 'transcriptomics', 'Image analysis',
-              'Multiple spatial', 'Image spatial transcriptomics', 'series analyses of spatial transcriptomics data',
+    keywords=['Python', 'Spatial transcriptomics', 'Spatial', 'transcriptomics',
+              'Multi-sample', 'Colocatlization-analysis'
               'Bioinformatics'],
     classifiers=[
         "Development Status :: 4 - Beta",

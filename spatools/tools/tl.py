@@ -1,4 +1,5 @@
 import os
+import scipy
 import cv2 as cv
 import itertools
 import numpy as np
@@ -24,7 +25,7 @@ def spatools_check(adata):
             raise Exception("Invalid response. Use 'y' for yes or 'n' for no.")
 
 def mesure_distances(adata: AnnData, cluster_col: str):
-    data = pd.DataFrame(adata.obsm["spatial"])
+    data = pd.DataFrame(adata.obsm["spatial"]) #type: ignore
     data[cluster_col] = adata.obs[cluster_col].values
     data.rename(columns={0: "x", 1: "y"}, inplace=True)
 
@@ -92,8 +93,8 @@ def check_spots_analysed(adata: AnnData,
     # Now I will check the number of spots analysed and compare with the number of spots in real object
     df = pd.DataFrame()
     for key, value in adata.uns["check_spots"].items():
-        df.index = ["spots_analysed"]
-        df[key] = value
+        df.index = ["spots_analysed"] #type: ignore
+        df[key] = value 
     df = df.T
     try:
         df["total_spots_anndata"] = pd.concat([df, pd.DataFrame(adata.obs[batch_key].value_counts())] ,axis=1)["count"]
@@ -110,22 +111,22 @@ def correlate_distances(adata: AnnData,
                         cluster_col: str = "cluster", 
                         batch_key: str = "batch"):
     """
-    Calcula as distâncias entre pontos espaciais e armazena os vizinhos mais próximos dentro do threshold.
+    Calculates the distances between spatial points and stores the nearest neighbors within the threshold.
 
     Parameters
-    ----------
+
     adata : AnnData
-        Objeto AnnData contendo as coordenadas espaciais em `obsm["spatial"]`.
+    An AnnData object containing spatial coordinates in obsm["spatial"].
     is_concatenated : bool, optional
-        Indica se os dados já foram concatenados. Default é False.
+    Indicates whether the data has already been concatenated. Default is False.
     cluster_col : str, optional
-        Nome da coluna em `adata.obs` contendo a informação do cluster.
+    Name of the column in adata.obs containing cluster information.
 
     Returns
-    -------
+
     adata : AnnData
-        O objeto AnnData com os vizinhos mais próximos armazenados em `uns["spatools"]` e
-          a porcentagem de spots analisados do total no objeto anndata em `uns["check_spots"]`.
+    The AnnData object with the nearest neighbors stored in uns["spatools"] and
+    the percentage of spots analyzed from the total in the AnnData object in uns["check_spots"].
     """
     
     # Verificando se a análise já foi feita
@@ -325,32 +326,42 @@ def remove_spots(adata: AnnData,
                  invert_x: bool = False, 
                  invert_y: bool = False):
     """
-    Remove spots do objeto AnnData com base na posição espacial.
+    Removes spots from the AnnData object based on spatial position.
 
-    Parâmetros:
+    Parameters:
+
     - adata: AnnData
-        Objeto contendo coordenadas espaciais em obsm["spatial"].
-    - type: str
-        Tipo de remoção ('y_max', 'y_min', 'x_max', 'x_min', 'y', 'x', 'all', 'lower', 'upper').
-    - n_spots: int, opcional (padrão: 1)
-        Número de spots a remover em cada critério.
-    - x_minimo: float, opcional (padrão: None)
-        Valor mínimo para a coordenada x.
-    - x_maximo: float, opcional (padrão: None)
-        Valor máximo para a coordenada x.
-    - y_minimo: float, opcional (padrão: None)
-        Valor mínimo para a coordenada y.
-    - y_maximo: float, opcional (padrão: None)
-        Valor máximo para a coordenada y.
-    - invert_x: bool, opcional (padrão: False)
-        Se True, inverte a seleção para x_minimo ou x_maximo.
-    - invert_y: bool, opcional (padrão: False)
-        Se True, inverte a seleção para y_minimo ou y_maximo.
+    Object containing spatial coordinates in obsm["spatial"].
 
-    Retorna:
-    - AnnData atualizado com os spots removidos.
+    - type: str
+    Type of removal ('y_max', 'y_min', 'x_max', 'x_min', 'y', 'x', 'all', 'lower', 'upper').
+
+    - n_spots: int, optional (default: 1)
+    Number of spots to remove for each criterion.
+
+    - x_minimo: float, optional (default: None)
+    Minimum value for the x coordinate.
+
+    - x_maximo: float, optional (default: None)
+    Maximum value for the x coordinate.
+
+    - y_minimo: float, optional (default: None)
+    Minimum value for the y coordinate.
+
+    - y_maximo: float, optional (default: None)
+    Maximum value for the y coordinate.
+
+    - invert_x: bool, optional (default: False)
+    If True, inverts the selection for x_minimo or x_maximo.
+
+    - invert_y: bool, optional (default: False)
+    If True, inverts the selection for y_minimo or y_maximo.
+
+    Returns:
+
+    - Updated AnnData with spots removed.
     """
-    spatial_coords = adata.obsm["spatial"]
+    spatial_coords: np.ndarray = adata.obsm["spatial"]#type: ignore
     n_obs = adata.n_obs
 
     # Identificar os índices dos valores extremos
@@ -435,8 +446,8 @@ def remove_spots(adata: AnnData,
     return adata[mask, :].copy()
 
 def z_score(adata: AnnData, 
-            filter_column: str = None, 
-            filter_value: str = None,
+            filter_column: str = "", 
+            filter_value: str = "",
             batch_key: str = "batch"):
     # Verifica se a chave "spatools" existe em uns
     if "spatools" not in adata.uns:

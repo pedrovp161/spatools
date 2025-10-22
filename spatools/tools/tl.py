@@ -11,7 +11,7 @@ from pybiomart import Server
 from .. import constants as con
 import matplotlib.pyplot as plt
 from scipy.spatial import distance
-from typing import List, Any, Optional
+from typing import List, Any, Optional, Union
 from scipy.spatial.distance import cdist
 from multiprocessing import Pool, cpu_count
 
@@ -129,7 +129,7 @@ def correlate_distances(adata: AnnData,
     the percentage of spots analyzed from the total in the AnnData object in uns["check_spots"].
     """
     
-    # Verificando se a análise já foi feita
+    # verifying if the analysis has already being done
     spatools_check(adata)
 
     if is_concatenated:
@@ -137,19 +137,26 @@ def correlate_distances(adata: AnnData,
         for i in adata.obs[batch_key].unique():
             subset = adata[adata.obs[batch_key] == i].copy()
             nearest_df = mesure_distances(adata=subset, cluster_col=cluster_col)
-            nearest_df[batch_key] = i  # Adiciona a coluna de batch
-            nearest_df["combination"] = nearest_df.apply(lambda row: tuple(sorted((int(row["color"]), int(row["color_neigh"])))), axis=1)
+            nearest_df[batch_key] = i  # add batch column
+            try: # two ways of dealing with the same thing ~ minimize errors
+                nearest_df["combination"] = nearest_df.apply(lambda row: tuple(sorted((int(row["color"]), int(row["color_neigh"])))), axis=1)
+            except ValueError:
+                nearest_df["combination"] = nearest_df.apply(lambda row: tuple(sorted((row["color"], row["color_neigh"]))), axis=1)
             merged_df.append(nearest_df)
 
-        # Concatenando os DataFrames individuais antes de armazenar
+        # Concatenating individual DataFrames before storing
         adata.uns["spatools"] = pd.concat(merged_df, ignore_index=True)
 
     else:
         if "spatools" not in adata.uns:
-            nearest_df = mesure_distances(adata=adata, cluster_col=cluster_col)  # Adiciona a coluna de batch
-            nearest_df["combination"] = nearest_df.apply(lambda row: tuple(sorted((int(row["color"]), int(row["color_neigh"])))), axis=1)
+            nearest_df = mesure_distances(adata=adata, cluster_col=cluster_col)  # add batch column
+            try: # two ways of dealing with the same thing ~ minimize errors
+                nearest_df["combination"] = nearest_df.apply(lambda row: tuple(sorted((int(row["color"]), int(row["color_neigh"])))), axis=1)
+            except ValueError:
+                nearest_df["combination"] = nearest_df.apply(lambda row: tuple(sorted((row["color"], row["color_neigh"]))), axis=1)
             adata.uns["spatools"] = nearest_df
 
+    # adding a df for result cheking 
     adata = check_spots_analysed(adata, batch_key="batch", spatools_key="spatools")
 
     return adata
@@ -447,7 +454,7 @@ def remove_spots(adata: AnnData,
 
 def z_score(adata: AnnData, 
             filter_column: str = "", 
-            filter_value: str = "",
+            filter_value: Union[str, int] = "",
             batch_key: str = "batch"):
     # Verifica se a chave "spatools" existe em uns
     if "spatools" not in adata.uns:
@@ -460,42 +467,48 @@ def z_score(adata: AnnData,
 
     # Filtra os dados, se necessário
     df = adata.uns["spatools"].copy()
-    if filter_value is not None:
+    if filter_value:
         df = df[df[filter_column] == filter_value]
 
     merges = {}
 
+    if batch_key not in df.columns:
+        df[batch_key] = "sample"
+
     for i in df[batch_key].unique():
         filtro_batch = df[df[batch_key] == i]
 
-        # 1. Contagem de observações para cada combinação
+        # 1. Count of observations for each combination
         filtro_batch = filtro_batch[filtro_batch["color_neigh"] != filtro_batch["color"]]
         score = pd.DataFrame(filtro_batch["combination"].value_counts()).reset_index()
         score.columns = ["combination", "count"]
 
-        # 2. Calculando a proporção observada
+        # 2. Calculating the observed proportion
         score["proportion_observed"] = score["count"] / score["count"].sum()
 
-        # 3. Contagem de cada cluster individual
+        # 3. Counting each individual cluster
         cluster_counts = filtro_batch["color"].value_counts()
 
-        # 4. Frequência dos clusters
+        # 4. Frequency of clusters
         cluster_frequencies = cluster_counts / cluster_counts.sum()
 
-        # 5. Obter todas as combinações possíveis de clusters
+        # 5. Get all possible combinations of clusters
         clusters = cluster_counts.index.tolist()
         combinacoes = list(itertools.combinations(clusters, 2))
 
-        # 6. Calcular a proporção esperada para cada combinação
-        proporcoes_esperadas = {tuple(sorted((int(c1), int(c2)))): 2 * cluster_frequencies[c1] * cluster_frequencies[c2] for c1, c2 in combinacoes}
+        # 6. Calculate the expected proportion for each combination
+        try:
+            proporcoes_esperadas = {tuple(sorted((int(c1), int(c2)))): 2 * cluster_frequencies[c1] * cluster_frequencies[c2] for c1, c2 in combinacoes}
+        except:
+            proporcoes_esperadas = {tuple(sorted((c1, c2))): 2 * cluster_frequencies[c1] * cluster_frequencies[c2] for c1, c2 in combinacoes}
 
-        # 7. Converter para DataFrame
+        # 7. convert to DataFrame
         proporcoes_esperadas_df = pd.DataFrame(list(proporcoes_esperadas.items()), columns=["combination", "proportion_expected"])
 
-        # 8. Merge entre as contagens observadas e esperadas
+        # 8. Merge between observed and expected counts
         merged_ordered_df = pd.merge(score, proporcoes_esperadas_df, on="combination", how="outer")
 
-        # 9. Preenchendo NaN com 0 TODO
+        # 9. filling with 0
         merged_ordered_df.fillna(0, inplace=True)
 
         # x. Ajustando o número de vizinhos #### TODO REMOVED
@@ -506,35 +519,35 @@ def z_score(adata: AnnData,
         # merged_ordered_df["expected_count"] = merged_ordered_df["proportion_expected"] * total_connections
         # merged_ordered_df["proportion_expected"] = merged_ordered_df["expected_count"] / merged_ordered_df["expected_count"].sum()
 
-        # 10. Cálculo do desvio padrão
+        # 10. Calculation of standard deviation
         merged_ordered_df["std_dev"] = np.sqrt((merged_ordered_df["proportion_expected"] * (1 - merged_ordered_df["proportion_expected"])) / len(filtro_batch))
 
-        # 11. Calculando o Z-score
+        # 11. Calculating the Z-score
         merged_ordered_df["Z_score"] = (merged_ordered_df["proportion_observed"] - merged_ordered_df["proportion_expected"]) / merged_ordered_df["std_dev"]
 
-        # 12. Adicionando ao dicionário por batch
+        # 12. Adding to dictionary by batch
         merges[i] = merged_ordered_df
 
-    # 13. Adicionando ao adata.uns como um dicionário
+    # 13. Adding to adata.uns as a dictionary
     adata.uns["z-score"] = merges
 
-    # Criando a lista de matrizes de correlação por batch
+    # Creating the list of correlation matrices by batch
     z_list = {}
 
     for batch, merged_df in merges.items():
         zscore_matrix = merged_df[["combination", 'Z_score']].copy()
         
-        # Extrair os valores das tuplas para duas colunas separadas (a, b)
+        # Extract the tuple values for two separate columns (a, b)
         zscore_matrix[['a', 'b']] = pd.DataFrame(zscore_matrix['combination'].tolist(), index=zscore_matrix.index)
 
-        # Para tratar as combinações (a, b) e (b, a) como equivalentes
+        # To treat combinations (a, b) and (b, a) as equivalent
         zscore_matrix['a'], zscore_matrix['b'] = np.minimum(zscore_matrix['a'], zscore_matrix['b']), np.maximum(zscore_matrix['a'], zscore_matrix['b'])
 
-        # Criar a matriz de correlação
+        # Creating the correlation matrix
         unique_values = sorted(set(zscore_matrix['a']).union(set(zscore_matrix['b'])))
         z_matrix = pd.DataFrame(index=unique_values, columns=unique_values)
 
-        # Preencher a matriz de correlação com os Z_scores
+        # Fill in the correlation matrix with the Z_scores
         for i in unique_values:
             for j in unique_values:
                 if i <= j:  
@@ -543,13 +556,12 @@ def z_score(adata: AnnData,
                         z_matrix.loc[i, j] = z_score.values[0]
                         z_matrix.loc[j, i] = z_score.values[0]
 
-        # Preencher valores NaN com 0
+        # Filling values to 0
         z_matrix.fillna(0, inplace=True)
 
-        # Salvar no dicionário de correlações
+        # Save to the correlation dictionary
         z_list[batch] = z_matrix
-
-    # Adicionando ao adata.uns
+        
     adata.uns["zscore_matrix"] = z_list
 
     return adata

@@ -12,6 +12,7 @@ import matplotlib.patches as _mpatches
 from matplotlib.lines import Line2D as _Line2D
 from statsmodels.stats.multitest import multipletests
 from matplotlib.colors import LinearSegmentedColormap
+from typing import Union
 
 
 def plot_bar(
@@ -350,136 +351,157 @@ def plot_single_spatial_image(
         plt.show()
 
 def z_score_matrixplot(adata: AnnData, 
-                       show = True, 
-                       title: str = "Score Z das conexões"
-                       ):
-    # checks iniciais
+                       show=True, 
+                       title: str = "Z-score of connections",
+                       mask_upper=True,
+                       return_object=True):
+    # --- Initial checks ---
     if "zscore_matrix" not in adata.uns:
         raise KeyError("'zscore_matrix' key was not found in adata.uns")
     if not isinstance(adata.uns["zscore_matrix"], dict):
         raise ValueError("'zscore_matrix' is not a dictionary")
     
-    # definindo matrix_size
-    matrix_size = 0
-    for i in adata.uns["zscore_matrix"].keys():
-        if matrix_size == 0: # primeira iteração
-            matrix_size = len(adata.uns["zscore_matrix"][i])
+    # --- Collect all unique labels (index + columns) ---
+    all_labels = set()
+    for key, mat in adata.uns["zscore_matrix"].items():
+        df = pd.DataFrame(mat)
+        all_labels.update(df.index)
+        all_labels.update(df.columns)
+    all_labels = sorted(list(all_labels))  # sort for consistency
 
-        elif matrix_size < len(adata.uns["zscore_matrix"][i]):# quando for maior
-            matrix_size = len(adata.uns["zscore_matrix"][i])
-        else: # quando for menor
-            pass
+    # --- Create label -> position map ---
+    label_to_idx = {label: idx for idx, label in enumerate(all_labels)}
 
-    # Criando a matriz de zeros
+    # --- Create accumulation matrix ---
+    matrix_size = len(all_labels)
     accumulation_matrix = np.zeros((matrix_size, matrix_size))
 
-    for key in adata.uns["zscore_matrix"].keys():
-        matrix = pd.DataFrame(adata.uns["zscore_matrix"][key])
-        if isinstance(matrix, pd.DataFrame):
-            rows, cols = matrix.index, matrix.columns
-            for i in rows:
-                for j in cols:
-                    accumulation_matrix[i, j] += matrix.loc[i, j] # faco o calculo do acumulado de cada linha e coluna
-        else:
-            raise ValueError("Chaves dentro de adata.uns['correlation_matrix'] não são do tipo DataFrame")
+    # --- Sum all matrices ---
+    for key, mat in adata.uns["zscore_matrix"].items():
+        matrix = pd.DataFrame(mat)
+        if not isinstance(matrix, pd.DataFrame):
+            raise ValueError(f"Key {key} in adata.uns['zscore_matrix'] is not a DataFrame")
 
-    # Dividir cada valor de accumulation_matrix pelo tamanho de corr_list
-    num_matrices = len(adata.uns["zscore_matrix"].keys())
+        for i in matrix.index:
+            for j in matrix.columns:
+                accumulation_matrix[label_to_idx[i], label_to_idx[j]] += matrix.loc[i, j]
+
+    # --- Average over all matrices ---
+    num_matrices = len(adata.uns["zscore_matrix"])
     average_matrix = accumulation_matrix / num_matrices
 
-    max = average_matrix.max().max()
-    min = average_matrix.min().min()
-    sum = -min + max
-    x=average_matrix.max().max()/sum
-    x
+    # --- Convert to DataFrame for plotting ---
+    corr_matrix = pd.DataFrame(average_matrix, index=all_labels, columns=all_labels)
 
-    # Copiar a matriz de correlação
-    average_matrix = pd.DataFrame(average_matrix)
-    corr_matrix = deepcopy(average_matrix)
-
-    # Criar um cmap personalizado que tenha branco no zero
-    colors = [(0, 'blue'), (1-x, 'white'), (1, 'red')]  # cores azul -> branco -> vermelho
+    # --- Create custom colormap ---
+    vmax = corr_matrix.values.max()
+    vmin = corr_matrix.values.min()
+    norm_range = vmax - vmin
+    zero_pos = (0 - vmin) / norm_range if norm_range != 0 else 0.5
+    colors = [(0, 'blue'), (zero_pos, 'white'), (1, 'red')]
     cmap = LinearSegmentedColormap.from_list('custom_bwr', colors)
 
-    # Converter a matriz de correlação em valores numéricos (caso ainda não estejam)
-    corr_matrix_numeric = corr_matrix.astype(float)
+    # --- Apply mask to remove upper triangle ---
+    mask = np.triu(np.ones_like(corr_matrix, dtype=bool)) if mask_upper else None
+    masked_matrix = np.ma.masked_where(mask, corr_matrix) if mask is not None else corr_matrix
 
-    # Criar uma máscara para a parte inferior da matriz (somente parte superior visível)
-    mask = ~np.tril(np.ones_like(corr_matrix_numeric, dtype=bool))
-
-    # Criar o heatmap com matplotlib
+    # --- Plot ---
     plt.figure(figsize=(18, 12))
-
-    # Aplicar a máscara para ocultar a parte inferior da matriz
-    plt.imshow(np.ma.masked_where(mask, corr_matrix_numeric), cmap=cmap, 
-               interpolation='nearest', vmin=corr_matrix_numeric.min().min(), 
-               vmax=corr_matrix_numeric.max().max())
-
-    # Adicionar barra de cores (colorbar)
+    plt.imshow(masked_matrix, cmap=cmap, interpolation='nearest', 
+               vmin=vmin, vmax=vmax)
     plt.colorbar()
 
-    # Adicionar os valores nas células (somente na parte visível)
-    for i in range(corr_matrix_numeric.shape[0]):
-        for j in range(i):  # Colocar valores apenas na parte inferior
-            if i != j:  # Excluir valores de clusters iguais
-                plt.text(j, i, f'{corr_matrix_numeric.iloc[i, j]:.2f}', 
-                        ha='center', va='center', color='black')
+    # --- Add numerical values (only lower triangle) ---
+    n = corr_matrix.shape[0]
+    for i in range(n):
+        for j in range(i):
+            if i != j:
+                plt.text(j, i, f'{corr_matrix.iloc[i, j]:.2f}', 
+                         ha='center', va='center', color='black', fontsize=10)
 
-    # Definir os ticks nos eixos x e y
-    plt.xticks(ticks=np.arange(len(corr_matrix.columns)), labels=corr_matrix.columns)
-    plt.yticks(ticks=np.arange(len(corr_matrix.index)), labels=corr_matrix.index)
-    plt.tick_params(axis="x", labelsize = 16)
-    plt.tick_params(axis="y", labelsize = 16)
+    # --- Axis and title ---
+    plt.xticks(ticks=np.arange(n), labels=corr_matrix.columns, rotation=45, ha='right')
+    plt.yticks(ticks=np.arange(n), labels=corr_matrix.index)
+    plt.tick_params(axis="x", labelsize=12)
+    plt.tick_params(axis="y", labelsize=12)
+    plt.title(title, fontsize=20)
+    plt.xlabel('x-axis clusters', fontsize=16)
+    plt.ylabel('y-axis clusters', fontsize=16)
 
-    # Adicionar título e rótulos dos eixos
-    plt.title(title, fontsize=25)
-    plt.xlabel('clusters eixo x', fontsize=20)
-    plt.ylabel('clusters eixo y', fontsize=20)
-
-    # Exibir o heatmap
     if show:
         plt.tight_layout()
         plt.show()
 
+    if return_object:
+        return corr_matrix
+
 def boxplot_cluster_correlations(adata: AnnData, 
                                  cluster_col: str = "clusters", 
                                  show=True, 
-                                 title: str = "Boxplot Horizontal das Correlações entre Clusters", 
+                                 title: str = "Horizontal Boxplot for niche's correlation", 
                                  subset: bool = False, 
-                                 value: int = None
+                                 value: Union[str, int] = ""
                                  ):
     """
-    Função para gerar um boxplot horizontal com base nas correlações entre clusters (sem duplicação de pares simétricos).
+    Generate a horizontal boxplot based on inter-cluster correlations (avoiding duplicate symmetric pairs).
     
-    Parâmetros:
-        adata: AnnData - Objeto com os dados
-        cluster_col: str - Nome da coluna que contém as labels dos clusters
-        show: bool - Se True, exibe o plot
-        title: str - Título do gráfico
+    Parameters
+    ----------
+    adata : AnnData
+        AnnData object containing the z-score correlation matrices in `adata.uns["zscore_matrix"]`.
+    cluster_col : str, optional
+        Name of the column that stores cluster labels (default: "clusters").
+    show : bool, optional
+        Whether to display the plot (default: True).
+    title : str, optional
+        Plot title (default: "Horizontal Boxplot of Cluster Correlations").
+    subset : bool, optional
+        If True, only include correlations involving a specific cluster (defined by `value`).
+    value : str or int, optional
+        The cluster index or label to filter by when `subset=True`.
     """
 
     # Verificar se adata.uns["correlation_matrix"] contém os dados esperados
-    if "zscore_matrix" not in adata.uns:
+    if "zscore_matrix" not in adata.uns.keys():
         raise ValueError("adata.uns não contém a chave 'zscore_matrix'.")
+    if cluster_col not in adata.obs.columns:
+        raise ValueError(f"adata.obs does not have the {cluster_col} column")
 
-    # Preparar os dados para o boxplot
+    # Prepare data for the boxplot 
     boxplot_data = []
     samples = adata.uns["zscore_matrix"].keys()
 
     for sample in samples:
         matrix = adata.uns["zscore_matrix"][sample]
         if not isinstance(matrix, pd.DataFrame):
-            raise ValueError(f"A matriz de correlação da amostra '{sample}' não é do tipo DataFrame.")
-        
-        for i in range(len(matrix)):
-            for j in range(i + 1, len(matrix)):  # Evitar duplicar pares simétricos
-                if subset:
-                    if i == value or j == value:
-                        boxplot_data.append({"Cluster Pair": f"{i}-{j}", "Correlation": matrix.iloc[i, j]})
-                else:
-                    boxplot_data.append({"sample_key": sample, "Cluster Pair": f"{i}-{j}", "Correlation": matrix.iloc[i, j]})
+            raise ValueError(f"The z-score matrix for sample '{sample}' is not a pandas DataFrame.")
 
-    # Criar DataFrame com os dados
+        # Handle both string and integer indexing
+        row_labels = list(matrix.index)
+        col_labels = list(matrix.columns)
+
+        for i in range(len(matrix)):
+            for j in range(i + 1, len(matrix)):  # Avoid symmetric duplicates
+                include = True
+
+                if subset:
+                    # If `value` is int, treat as position
+                    if isinstance(value, int):
+                        include = (i == value or j == value)
+                    # If `value` is str, compare with cluster labels
+                    elif isinstance(value, str):
+                        include = (row_labels[i] == value or col_labels[j] == value)
+                    else:
+                        include = False
+
+                if include:
+                    boxplot_data.append({
+                        "sample_key": sample,
+                        "Cluster Pair": f"{row_labels[i]}-{col_labels[j]}",
+                        "Correlation": matrix.iloc[i, j]
+                    })
+
+    # Convert to df
     final_data = pd.DataFrame(boxplot_data)
 
     # z-score para p-valor bicaudal
@@ -492,28 +514,25 @@ def boxplot_cluster_correlations(adata: AnnData,
 
     # significativos = [final_data["FDR_pval"] < 0.05]
     # final_data["significant"] = significativos
-    adata.uns["significativos"] = final_data
+    adata.uns["stats"] = final_data
 
-    # Criar o boxplot horizontal
+    # Horizontal boxplot 
     plt.figure(figsize=(12, 16))
-
-    # Boxplot
     sns.boxplot(x="Correlation", y="Cluster Pair", data=final_data, hue="Cluster Pair", palette="Set3", orient="h", legend=False)
 
-    # Adicionar área sombreada para região não-significativa: Correção de borrefeni
+    # Add shaded area for insignificant region: Correction of borrefeni
     num_comparisons = len(final_data["Cluster Pair"].unique())
     bonferroni_threshold = 1 - (0.05 / (num_comparisons))  # Ajuste do limiar
 
-    # agora calcular a q_normal
-    # Calcular o valor crítico da distribuição normal (q_normal)
+    # q_normal calculus: calculate the critical value of the normal distribution (q_normal)
     q_normal = norm.ppf(bonferroni_threshold)
 
     plt.axvspan(-q_normal, q_normal, color='gray', alpha=0.2, label='Não Significativo (|z| < 1.96)')
 
-    # Linha preta central
+    #  Dark central line
     plt.axvline(x=0, color='black', linestyle='--', linewidth=2, alpha=0.5)
 
-    # Personalização
+    # plot
     plt.title(title, fontsize=20)
     plt.xlabel("Valores de z-score", fontsize=15)
     plt.ylabel("Par de Clusters", fontsize=15)
@@ -568,7 +587,7 @@ def outlier_quality(
     group_by : str
         Column name in the AnnData object containing the group information.
     outlier : int
-        The number of outliers to be shown in the plot.
+        The k value from the MAD outlier detection.
     figsize : tuple
         The size of the figure.
     title : str

@@ -1,7 +1,6 @@
 from .pp import (
     save_spatial_files,
-    is_outlier_high,
-    is_outlier_low,
+    is_outlier,
     check_summary,
     preprocessar,
     processar
@@ -9,8 +8,7 @@ from .pp import (
 
 __all__ = [
     'save_spatial_files',
-    'is_outlier_high',
-    'is_outlier_low',
+    'is_outlier',
     'check_summary',
     'preprocessar',
     'processar'

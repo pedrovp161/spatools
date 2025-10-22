@@ -22,9 +22,9 @@ def save_spatial_files(output_dir: str, adatas_dir: dict):# TODO verificar se de
         sc.write(output_file_path, adata) #type: ignore
 
 # Outliers identification
-def is_outlier_high(x: Any, k=4):
+def is_outlier(x, k=4, method='both'):
     """
-    Identify high outliers in an array of values.
+    Identify outliers in an array of values using Median Absolute Deviation (MAD).
 
     Parameters
     ----------
@@ -33,17 +33,36 @@ def is_outlier_high(x: Any, k=4):
     k : int, optional
         The number of median absolute deviations from the median to consider a value
         an outlier. Default is 4.
+    method : str, optional
+        Method to identify outliers:
+        - 'high': identify only high outliers (values above median + k*MAD)
+        - 'low': identify only low outliers (values below median - k*MAD)  
+        - 'both': identify both high and low outliers (default)
 
     Returns
     -------
     boolean array
-        Boolean array indicating which values are low outliers.
+        Boolean array indicating which values are outliers.
 
     Notes
     -----
     This function uses the Median Absolute Deviation (MAD) to identify outliers.
     The MAD is a robust measure of the spread of the data, and outliers are defined
     as values that are more than k times the MAD away from the median.
+    
+    Examples
+    --------
+    >>> data = [1, 2, 3, 4, 5, 100]  # 100 is a high outlier
+    >>> is_outlier(data, method='high')
+    array([False, False, False, False, False, True])
+    
+    >>> data = [-100, 2, 3, 4, 5, 6]  # -100 is a low outlier
+    >>> is_outlier(data, method='low') 
+    array([True, False, False, False, False, False])
+    
+    >>> data = [-100, 2, 3, 4, 5, 100]  # both -100 and 100 are outliers
+    >>> is_outlier(data, method='both')
+    array([True, False, False, False, False, True])
     """
     # Compute the median of the data
     median = np.median(x)
@@ -51,48 +70,18 @@ def is_outlier_high(x: Any, k=4):
     # Compute the Median Absolute Deviation (MAD)
     mad = np.median(np.abs(x - median))
     
-    # Compute the threshold value for outliers
+    # Compute the threshold values
     threshold = k * mad
     
-    # Return boolean array indicating which values are outliers
-    return np.abs(x - median) > threshold
-
-
-def is_outlier_low(x: Any, k=4):
-    """
-    Identify low outliers in an array of values.
-
-    Parameters
-    ----------
-    x : array-like
-        Input array of values.
-    k : int, optional
-        The number of median absolute deviations from the median to consider a value
-        an outlier. Default is 4.
-
-    Returns
-    -------
-    boolean array
-        Boolean array indicating which values are low outliers.
-
-    Notes
-    -----
-    This function uses the Median Absolute Deviation (MAD) to identify outliers.
-    The MAD is a robust measure of the spread of the data, and outliers are defined
-    as values that are more than k times the MAD away from the median.
-    """
-    # Compute the median of the data
-    median = np.median(x)
-    
-    # Compute the Median Absolute Deviation (MAD)
-    mad = np.median(np.abs(x - median))
-    
-    # Compute the lower threshold value for outliers
-    threshold_low = median - k * mad
-    
-    # Return boolean array indicating which values are low outliers
-    return x < threshold_low
-
+    # Identify outliers based on the specified method
+    if method == 'high':
+        return (x - median) > threshold
+    elif method == 'low':
+        return (median - x) > threshold
+    elif method == 'both':
+        return np.abs(x - median) > threshold
+    else:
+        raise ValueError("Method must be 'high', 'low', or 'both'")
 # define função para contagem de células em todas as amostras
 def check_summary(dicionario: dict):
     """
@@ -168,14 +157,14 @@ def preprocessar(adatas_dir: dict,
         # Outliers cuts
         if counts_outliers:
             adata = adata.copy()
-            adata.obs['out_counts_low'] = is_outlier_low(adata.obs['log1p_total_counts'])
+            adata.obs['out_counts_low'] = is_outlier(adata.obs['log1p_total_counts'], method="low")
             true_indexes = adata.obs['out_counts_low']
             true_indexes = true_indexes[~true_indexes].index
             adata = adata[true_indexes, :]
             
         if genes_outliers:
             adata = adata.copy()
-            adata.obs['out_genes'] = is_outlier_low(adata.obs['log1p_n_genes_by_counts'])
+            adata.obs['out_genes'] = is_outlier(adata.obs['log1p_n_genes_by_counts'], method="low")
             true_indexes = adata.obs['out_genes']
             true_indexes = true_indexes[~true_indexes].index
             adata = adata[true_indexes, :]
@@ -183,15 +172,15 @@ def preprocessar(adatas_dir: dict,
         # Outliers combinados (contagens ou genes)
         if genes_and_counts_outliers:
             adata = adata.copy()
-            adata.obs['out_counts_low'] = is_outlier_low(adata.obs['log1p_total_counts'])
-            adata.obs['out_genes'] = is_outlier_low(adata.obs['log1p_n_genes_by_counts'])
+            adata.obs['out_counts_low'] = is_outlier(adata.obs['log1p_total_counts'], method="low")
+            adata.obs['out_genes'] = is_outlier(adata.obs['log1p_n_genes_by_counts'], method="low")
             adata.obs['out_combined'] = adata.obs['out_counts_low'] | adata.obs['out_genes']
             true_indexes = ~adata.obs['out_combined']
             adata = adata[true_indexes, :]
         
         if mt_percentage_outliers:
             adata = adata.copy()
-            adata.obs["out_counts_mt"] = is_outlier_high(adata.obs["pct_counts_mt"])
+            adata.obs["out_counts_mt"] = is_outlier(adata.obs["pct_counts_mt"], method="high")
             true_indexes = adata.obs['out_counts_mt']
             true_indexes = true_indexes[~true_indexes].index
             adata = adata[true_indexes, :]

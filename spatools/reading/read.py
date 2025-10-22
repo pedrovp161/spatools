@@ -87,13 +87,13 @@ class Reading():
         for caminho_arquivo in caminhos_arquivos:
             nome_arquivo = os.path.basename(caminho_arquivo)
             
-            print("Lendo arquivo:", nome_arquivo)  # Verificando o arquivo que está sendo lido
+            print("Reading file:", nome_arquivo)  # Verificando o arquivo que está sendo lido
 
             try:
                 adata = sc.read_h5ad(caminho_arquivo)
                 dictionary[nome_arquivo] = adata
             except Exception as e:
-                print(f"Erro ao ler o arquivo {nome_arquivo}: {e}")
+                print(f"Error while reading file {nome_arquivo}: {e}")
                 continue
         
         for key, adata in dictionary.items():
@@ -106,7 +106,7 @@ class Reading():
     def read_free(self, DIR: str):
         # File paths
         pos_path = os.path.join(DIR, "spatial", "tissue_positions_list.csv")
-        matx_path = os.path.join(DIR, "raw_feature_bc_matrix")
+        matx_path = os.path.join(DIR, "filtered_feature_bc_matrix")
         json_path = os.path.join(DIR, "spatial", "scalefactors_json.json")
 
         # Finding image files
@@ -126,7 +126,10 @@ class Reading():
         adata = sc.read_10x_mtx(matx_path)#type:ignore
 
         # Reading positional information
-        pos_spatial = pd.read_csv(pos_path, header=None)
+        try:
+            pos_spatial = pd.read_csv(pos_path, header=None)
+        except FileNotFoundError:
+            pos_spatial = pd.read_csv(f"{'_'.join(pos_path.split('_')[0:-1])}.csv", header=None)
 
         barcodes = pd.DataFrame(adata.obs.index)
 
@@ -165,7 +168,10 @@ class Reading():
         adata.uns = modelo_uns  # Assigning the uns model to adata.uns
 
         # spatial coordinates
-        pos = pd.read_csv(pos_path, header=None)
+        try:
+            pos = pd.read_csv(pos_path, header=None)
+        except FileNotFoundError:
+            pos = pd.read_csv(f"{'_'.join(pos_path.split('_')[0:-1])}.csv", header=None)
         pos = pd.merge_ordered(barcodes, pos, how='inner', left_on=0, right_on=0)
         # spatial coordinates
         pos = pos[[0, 5, 4]]
@@ -200,7 +206,7 @@ if __name__ == "__main__":# test
 
     # Random seed for reproducibility
     r = random.seed(42)
-    print(f"seed utilizada: {r}")
+    print(f"seed used: {r}")
 
     pp.preprocessar(adatas_dir=adatas_dir, save_files=False, output_dir=r'D:\pack_v1\data\filtered')
 

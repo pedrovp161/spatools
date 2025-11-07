@@ -1,0 +1,43 @@
+# pyproject.toml - generated template. Replace placeholder values with those from your setup.py.
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# PEP 621 metadata section.
+[project]
+name = "spatools"               # from setup.py: name
+version = "0.0.91"               # from setup.py: version
+readme = "README.md"            # or path to your long description file
+requires-python = ">=3.8"       # from setup.py: python_requires
+license = { text = "MIT" }      # replace with your license or use file = "LICENSE"
+
+authors = [
+    { name = "Pedro Videira Pinho", email = "pedrovp161@gmail.com" },
+    {name = "Mariana Lima Boroni Martins", email = "mariana.boroni@inca.gov.br"}
+]
+
+# classifiers from setup.py (if present)
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License"
+]
+
+# Runtime dependencies (copy install_requires from setup.py)
+dependencies = ["scanpy>=1.10.1", "pybiomart", "scikit-image"]
+
+# Project URLs (optional)
+[project.urls]
+Homepage = "https://pypi.org/project/spatools/"
+Repository = "https://github.com/pedrovp161/spatools"
+
+# setuptools-specific configuration: adjust if you used package_dir / find_packages in setup.py.
+[tool.setuptools.packages.find]
+where = [""]
+
+[tool.setuptools]
+include-package-data = true
+
+# If your setup.py defined entry_points (console_scripts), copy them here:
+[project.scripts]
+spatools-cli = "spatools.cli:main"

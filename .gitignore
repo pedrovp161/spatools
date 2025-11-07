@@ -15,3 +15,5 @@ Lais_data.ipynb
 df.csv
 df_total.csv
 spatools/plotting/__pycache__/pl.cpython-311.pyc
+z_score_Lais_data.h5ad
+spatools/plotting/__pycache__/__init__.cpython-311.pyc

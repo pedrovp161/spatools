@@ -420,8 +420,8 @@ def z_score_matrixplot(adata: AnnData,
                          ha='center', va='center', color='black', fontsize=10)
 
     # --- Axis and title ---
-    plt.xticks(ticks=np.arange(n), labels=corr_matrix.columns, rotation=45, ha='right')
-    plt.yticks(ticks=np.arange(n), labels=corr_matrix.index)
+    plt.xticks(ticks=np.arange(n), labels=corr_matrix.columns, rotation=45, ha='right')#type: ignore
+    plt.yticks(ticks=np.arange(n), labels=corr_matrix.index)#type: ignore
     plt.tick_params(axis="x", labelsize=12)
     plt.tick_params(axis="y", labelsize=12)
     plt.title(title, fontsize=20)
@@ -527,7 +527,7 @@ def boxplot_cluster_correlations(adata: AnnData,
     # q_normal calculus: calculate the critical value of the normal distribution (q_normal)
     q_normal = norm.ppf(bonferroni_threshold)
 
-    plt.axvspan(-q_normal, q_normal, color='gray', alpha=0.2, label='Não Significativo (|z| < 1.96)')
+    plt.axvspan(-q_normal, q_normal, color='gray', alpha=0.2, label='Não Significativo (|z| < 1.96)')#type: ignore
 
     #  Dark central line
     plt.axvline(x=0, color='black', linestyle='--', linewidth=2, alpha=0.5)
@@ -678,7 +678,7 @@ def outlier_quality(
             # Calculating the value of outliers in each sample
             col = adata.obs[clusters_col]
             median = np.median(col)
-            mad = np.median(np.abs(col - median))
+            mad = np.median(np.abs(col - median))#type: ignore
             k = outlier
             upper_bound = median + k * mad
             lower_bound = median - k * mad

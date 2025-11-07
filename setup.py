@@ -8,7 +8,7 @@ with open('README.md', 'r', encoding='utf-8') as arq:
 
 install_requires = "scanpy>=1.10.1"
 
-VERSION = '0.0.85'
+VERSION = '0.0.9'
 DESCRIPTION = 'This comprehensive toolkit enables the analysis of multiple spatial transcriptomics datasets, offering a wide range of analytical capabilities. It supports various types of analyses, including detailed plotting and advanced image analysis, to help you gain deeper insights into your spatial transcriptomics data.'
 
 # Configuração do setup

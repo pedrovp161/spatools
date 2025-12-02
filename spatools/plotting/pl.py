@@ -97,8 +97,8 @@ def plot_bar(
 
 def plot_clusters_quality_violin_boxplot(
         adata: AnnData, 
-        clusters_col: str = "leiden_0.5", 
-        value_col: str = "pct_counts_mt", 
+        clusters_col: str = "", 
+        value_col: str = "", 
         figsize: tuple = (12, 8)):
     """
     Plots violin and box plots for the percentage of mitochondrial genes by cluster.
@@ -108,9 +108,9 @@ def plot_clusters_quality_violin_boxplot(
     adata : AnnData
         AnnData object containing the data.
     cluster_col : str, optional
-        Name of the column containing the clusters (default: "leiden_0.5").
+        Name of the column containing the clusters (example: "leiden_0.5").
     value_col : str, optional
-        Name of the column containing the values to be used (default: "pct_counts_mt").
+        Name of the column containing the values to be used (example: "pct_counts_mt").
     figsize : tuple, optional
         Size of the figure (default: (12, 8)).
 
@@ -119,6 +119,13 @@ def plot_clusters_quality_violin_boxplot(
     None
         The function displays the plot.
     """
+
+    if not clusters_col:
+        print("clusters_col is not defined")
+        return
+    if not value_col:
+        print("value_col is not defined")
+        return
 
     # Extrair as colunas relevantes para análise
     df = adata.obs[[clusters_col, value_col]]
@@ -190,7 +197,7 @@ def plot_clusters_quality_violin_boxplot(
 
 def plot_spatial_clusters(
         adata: AnnData, 
-        clusters_col: str = "leiden_0.5", 
+        clusters_col: str = "", 
         cols: int = 4, 
         scale_factor: int = 3000, 
         output_file: bool = False, 
@@ -206,7 +213,7 @@ def plot_spatial_clusters(
     adata : AnnData
         AnnData object containing the data.
     clusters_col : str, optional
-        Name of the column containing the clusters (default is "leiden_0.5").
+        Name of the column containing the clusters (example is "leiden_0.5").
     cols : int, optional
         Number of columns for the subplot (default is 4).
     scale_factor : int, optional
@@ -226,12 +233,19 @@ def plot_spatial_clusters(
         The function displays the plot.
     """
 
+    if not clusters_col:
+        print("clusters_col is not defined")
+        return
+
     keynames = adata.obs["batch"].unique()
 
-    # Mapeamento das cores dos clusters
-    clusters_colors = dict(
-        zip([str(i) for i in range(len(adata.uns[f"{clusters_col}_colors"]))], adata.uns[f"{clusters_col}_colors"])
-    )
+    try:
+        # Mapeamento das cores dos clusters
+        clusters_colors: dict = dict(
+            zip([str(i) for i in range(len(adata.uns[f"{clusters_col}_colors"]))], adata.uns[f"{clusters_col}_colors"])
+        )
+    except KeyError:
+        clusters_colors: dict = {}
 
     # Determinar o número de subplots baseado no número de amostras
     num_samples = len(keynames)
@@ -243,6 +257,18 @@ def plot_spatial_clusters(
     # Iterar sobre as amostras para plotar
     for i, library in enumerate(keynames):
         ad = adata[adata.obs['batch'] == library, :].copy()  # Uso correto de pandas slicing
+
+        try:
+            palette = [
+                v for k, v in clusters_colors.items()
+                if k in ad.obs[f'{clusters_col}'].unique().tolist()
+            ]
+            if not palette:
+                raise ValueError("palette vazia")
+        except KeyError:
+            palette = plt.get_cmap('tab20')
+
+
         sc.pl.spatial(
             ad,
             img_key="hires",
@@ -253,9 +279,7 @@ def plot_spatial_clusters(
             show=False,
             scale_factor=scale_factor,
             frameon=False,
-            palette=[
-                v for k, v in clusters_colors.items() if k in ad.obs[f'{clusters_col}'].unique().tolist()],
-            ax=axs[i],  # Uso correto do eixo
+            palette=palette,
             title='' if not include_titles else library  # Define o título como vazio se include_titles for False
         )
         if include_titles:
@@ -440,7 +464,11 @@ def boxplot_cluster_correlations(adata: AnnData,
                                  show=True, 
                                  title: str = "Horizontal Boxplot for niche's correlation", 
                                  subset: bool = False, 
-                                 value: Union[str, int] = ""
+                                 value: Union[str, int] = "",
+                                 figsize: tuple[int, int] = (12, 16),
+                                 title_font: int = 25,
+                                 label_font: int = 18,
+                                 ticks_font: int = 18
                                  ):
     """
     Generate a horizontal boxplot based on inter-cluster correlations (avoiding duplicate symmetric pairs).
@@ -517,7 +545,7 @@ def boxplot_cluster_correlations(adata: AnnData,
     adata.uns["stats"] = final_data
 
     # Horizontal boxplot 
-    plt.figure(figsize=(12, 16))
+    plt.figure(figsize=figsize)
     sns.boxplot(x="Correlation", y="Cluster Pair", data=final_data, hue="Cluster Pair", palette="Set3", orient="h", legend=False)
 
     # Add shaded area for insignificant region: Correction of borrefeni
@@ -533,11 +561,11 @@ def boxplot_cluster_correlations(adata: AnnData,
     plt.axvline(x=0, color='black', linestyle='--', linewidth=2, alpha=0.5)
 
     # plot
-    plt.title(title, fontsize=20)
-    plt.xlabel("Valores de z-score", fontsize=15)
-    plt.ylabel("Par de Clusters", fontsize=15)
-    plt.xticks(fontsize=12)
-    plt.yticks(fontsize=12)
+    plt.title(title, fontsize=title_font)
+    plt.xlabel("Valores de z-score", fontsize=label_font)
+    plt.ylabel("Par de Clusters", fontsize=label_font)
+    plt.xticks(fontsize=ticks_font)
+    plt.yticks(fontsize=ticks_font)
     plt.legend()
 
     if show:

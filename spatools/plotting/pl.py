@@ -513,14 +513,13 @@ def boxplot_cluster_correlations(adata: AnnData,
                 include = True
 
                 if subset:
-                    # If `value` is int, treat as position
-                    if isinstance(value, int):
-                        include = (i == value or j == value)
-                    # If `value` is str, compare with cluster labels
-                    elif isinstance(value, str):
-                        include = (row_labels[i] == value or col_labels[j] == value)
-                    else:
-                        include = False
+                    # Converte value para string para comparação segura
+                    value_str = str(value)
+
+                    include = (
+                        str(row_labels[i]) == value_str or 
+                        str(col_labels[j]) == value_str
+                    )
 
                 if include:
                     boxplot_data.append({
@@ -528,6 +527,7 @@ def boxplot_cluster_correlations(adata: AnnData,
                         "Cluster Pair": f"{row_labels[i]}-{col_labels[j]}",
                         "Correlation": matrix.iloc[i, j]
                     })
+
 
     # Convert to df
     final_data = pd.DataFrame(boxplot_data)

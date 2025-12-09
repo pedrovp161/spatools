@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # PEP 621 metadata section.
 [project]
 name = "spatools"               # from setup.py: name
-version = "0.0.91"               # from setup.py: version
+version = "0.0.93"               # from setup.py: version
 readme = "README.md"            # or path to your long description file
 requires-python = ">=3.8"       # from setup.py: python_requires
 license = { text = "MIT" }      # replace with your license or use file = "LICENSE"

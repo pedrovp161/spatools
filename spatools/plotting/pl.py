@@ -845,6 +845,30 @@ def outlier_quality(
     fig.tight_layout()
     plt.show()
 
+def corr_spearman(adata: AnnData, corr_matrix, pval_matrix):
+    # Extrair os nomes das colunas sem cortar errado
+    names = [col.replace("q05cell_abundance_w_sf_", "") 
+            for col in adata.obsm["q05_cell_abundance_w_sf"].columns]
+      
+    # Criar clustermap (com clustering automático de linhas e colunas)
+    cg = sns.clustermap(
+        corr_matrix.astype(float),
+        cmap="coolwarm",
+        center=0,
+        figsize=(12, 10),
+        xticklabels=True,
+        yticklabels=True,
+        row_cluster=True,   # cluster nas linhas
+        col_cluster=True,    # cluster nas colunas
+        cbar_pos=(0.98, 0.05, 0.1, 0.05),
+        dendrogram_ratio=(0, 0)
+    )
+
+    plt.title("Correlação de Spearman entre tipos celulares", fontsize=20)
+
+    # Salvar figura
+    plt.savefig("heatmap_spearman_clustered.png", dpi=300)
+    plt.close()
 
 ### deprecated
 def plot_bar_by_batch(adata: AnnData, clusters_col: str) -> None:
@@ -908,6 +932,7 @@ def plot_bar_by_group(adata: AnnData, clusters_col: str = "leiden_0.5") -> None:
     ax.legend(title='Clusters', ncol=2, loc="right", bbox_to_anchor=(1.17, 0.5))
     plt.tight_layout()
     plt.show()
+
 
 if __name__ == "__main__":
     # example of use:

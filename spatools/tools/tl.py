@@ -566,6 +566,73 @@ def z_score(adata: AnnData,
 
     return adata
 
+# Função para calcular correlação de Spearman entre dois tipos celulares
+def spatial_spearman(adata: AnnData, 
+                     cell1: str, 
+                     cell2: str, 
+                     subset: str = "", 
+                     value: str = "", 
+                     saveFig: bool = False,
+                     show: bool = False):
+    if not subset or not value:
+        raise ValueError("Os parâmetros 'subset' e 'value' devem ser fornecidos.")
+    
+    adata = adata[adata.obs[subset] == value]
+
+    # Acessar diretamente as colunas corretas
+    x = adata.obsm["q05_cell_abundance_w_sf"][f"q05cell_abundance_w_sf_{cell1}"].values.copy()
+    y = adata.obsm["q05_cell_abundance_w_sf"][f"q05cell_abundance_w_sf_{cell2}"].values.copy()
+    
+    # Calcular correlação
+    corr, p_value = spearmanr(x, y)
+    
+    # Gráfico de dispersão
+    plt.figure(figsize=(12, 8))
+    plt.scatter(x, y, c='blue', alpha=0.5)
+    plt.xlabel(f"Abundância de {cell1}", fontsize=18)
+    plt.ylabel(f"Abundância de {cell2}", fontsize=18)
+    plt.title(f"Correlação de Spearman entre {cell1} e {cell2}", fontsize=20)
+    plt.grid(True)
+    plt.text(0.95, 0.95, f'Correlação: {corr:.4f}', transform=plt.gca().transAxes,
+             fontsize=12, color='red', verticalalignment='top')
+    plt.text(0.95, 0.90, f'Valor-p: {p_value:.4e}', transform=plt.gca().transAxes,
+             fontsize=12, color='red', verticalalignment='top')
+
+    if saveFig:
+        plt.savefig(f'spatial_spearman_{cell1}_{cell2}.png', dpi=300)
+    if show:
+        plt.show()
+
+    plt.close()
+    
+    return corr, p_value
+
+# Função para matriz de correlação
+def spearman_correlation_matrix(adata: AnnData, 
+                                subset: str = "", 
+                                value: str = ""):
+    if not subset or not value:
+        raise ValueError("Os parâmetros 'subset' e 'value' devem ser fornecidos.")
+    
+    # Extrair os nomes das colunas sem cortar errado
+    names = [col.replace("q05cell_abundance_w_sf_", "") for col in adata.obsm["q05_cell_abundance_w_sf"].columns]
+
+    corr_matrix = pd.DataFrame(index=names, columns=names, dtype=float)
+    pval_matrix = pd.DataFrame(index=names, columns=names, dtype=float)
+
+    for name1 in names:
+        for name2 in names:
+            corr, p_value = spatial_spearman(
+                adata=adata,
+                cell1=name1,
+                cell2=name2,
+                subset=subset,
+                value=value,
+                saveFig=False
+            )
+            corr_matrix.loc[name1, name2] = corr
+            pval_matrix.loc[name1, name2] = p_value
+    return corr_matrix, pval_matrix
 
 # deprecated
 def calculate_distances(args):

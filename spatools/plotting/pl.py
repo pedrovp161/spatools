@@ -14,7 +14,6 @@ from statsmodels.stats.multitest import multipletests
 from matplotlib.colors import LinearSegmentedColormap
 from typing import Union
 
-
 def plot_bar(
         adata: AnnData, 
         clusters_col: str, 
@@ -468,7 +467,8 @@ def boxplot_cluster_correlations(adata: AnnData,
                                  figsize: tuple[int, int] = (12, 16),
                                  title_font: int = 25,
                                  label_font: int = 18,
-                                 ticks_font: int = 18
+                                 ticks_font: int = 18,
+                                 limits: tuple[float, float] = (None, None)
                                  ):
     """
     Generate a horizontal boxplot based on inter-cluster correlations (avoiding duplicate symmetric pairs).
@@ -566,6 +566,8 @@ def boxplot_cluster_correlations(adata: AnnData,
     plt.ylabel("Par de Clusters", fontsize=label_font)
     plt.xticks(fontsize=ticks_font)
     plt.yticks(fontsize=ticks_font)
+    if limits != (None, None):
+        plt.xlim(limits)
     plt.legend()
 
     if show:

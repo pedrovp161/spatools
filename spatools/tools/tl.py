@@ -1,6 +1,6 @@
 import os
 import scipy
-import cv2 as cv
+import warnings
 import itertools
 import numpy as np
 import pandas as pd
@@ -672,6 +672,8 @@ def process_image(input_image_path,
                   param2=0.2, 
                   minRadius=50, 
                   maxRadius=100):
+    import cv2 as cv
+    warnings.simplefilter("always", DeprecationWarning)
     """
     Process an input image to detect circles using Hough Transform.
 

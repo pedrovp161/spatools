@@ -1,9 +1,7 @@
-from .read import (
-    save_spatial_files,
-    Reading
+from .read_ import (
+    read
 )
 
 __all__ = [
-    'save_spatial_files',
-    'Reading'
+    'read'
 ]

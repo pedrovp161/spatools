@@ -21,8 +21,10 @@ def plot_bar(
         group_order: list = None,  # type: ignore
         title: str = '', 
         xlabel: str = '', 
-        ylabel: str = 'Porcentagem (%)',
-        use_percentage: bool = True  # Novo argumento
+        ylabel: str = 'Percentage (%)',
+        use_percentage: bool = True,  # Novo argumento
+        angle: int  = 90,
+        legend: str = 'Clusters'
     ) -> None:
     """
     Function to plot stacked bar charts with grouping.
@@ -75,10 +77,8 @@ def plot_bar(
     # decide between percentage and absolute values
     if use_percentage:
         data_to_plot = count_data.div(count_data.sum(axis=1), axis=0) * 100  # type: ignore
-        ylabel = 'Porcentagem (%)'
     else:
         data_to_plot = count_data
-        ylabel = 'Valores absolutos' 
 
     # use colors defined in adata.uns
     cluster_labels = data_to_plot.columns
@@ -87,10 +87,10 @@ def plot_bar(
     # plot stacked bar
     ax = data_to_plot.plot(kind='bar', stacked=True, figsize=(12, 6), color=colors)
     ax.set_title(title, fontsize=25)
-    ax.set_xlabel(xlabel, fontsize=25)
-    ax.set_ylabel(ylabel, fontsize=25)
-    ax.set_xticklabels(ax.get_xticklabels(), fontsize=14, rotation=60)
-    ax.legend(title="clusters", ncol=2, loc="right", bbox_to_anchor=(1.17, 0.5))
+    ax.set_xlabel(xlabel, fontsize=23)
+    ax.set_ylabel(ylabel, fontsize=23)
+    ax.set_xticklabels(ax.get_xticklabels(), fontsize=14, rotation=angle)
+    ax.legend(title=legend, ncol=2, loc="right", bbox_to_anchor=(1.17, 0.5))
     plt.tight_layout()
     plt.show()
 
@@ -195,15 +195,15 @@ def plot_clusters_quality_violin_boxplot(
     plt.show()
 
 def plot_spatial_clusters(
-        adata: AnnData, 
-        clusters_col: str = "", 
-        cols: int = 4, 
-        scale_factor: int = 3000, 
-        output_file: bool = False, 
-        dpi: int = 1000, 
-        size = 1.5, 
+        adata: AnnData,
+        clusters_col: str = "",
+        cols: int = 4,
+        scale_factor: int = 3000,
+        output_file: bool | str = False,
+        dpi: int = 200,
+        size: float = 1.5,
         include_titles: bool = True):
-    
+
     """
     Plots spatial images for each sample into subplots.
 
@@ -211,88 +211,96 @@ def plot_spatial_clusters(
     ----------
     adata : AnnData
         AnnData object containing the data.
-    clusters_col : str, optional
-        Name of the column containing the clusters (example is "leiden_0.5").
-    cols : int, optional
-        Number of columns for the subplot (default is 4).
-    scale_factor : int, optional
-        Scale factor for the figure size (default is 3000).
-    output_file : bool or str, optional
-        File path to save the figure. If False, the figure is not saved (default is False).
-    dpi : int, optional
-        Figure resolution in dpi (default is 1000).
-    size : float, optional
-        Size of the points on the graph (default is 1.5).
-    include_titles : bool, optional
-        If True, sample titles will be included (default is True).
+    clusters_col : str
+        Name of the column containing the clusters (example: "leiden_0.5").
+    cols : int
+        Number of columns for the subplot grid.
+    scale_factor : int
+        Scale factor for spatial plotting.
+    output_file : bool or str
+        Path to save the figure. If False, the figure is not saved.
+    dpi : int
+        Figure resolution.
+    size : float
+        Size of spatial spots.
+    include_titles : bool
+        Whether to show sample titles.
 
     Returns
     -------
     None
-        The function displays the plot.
     """
 
     if not clusters_col:
-        print("clusters_col is not defined")
-        return
+        raise ValueError("clusters_col must be provided")
 
     keynames = adata.obs["batch"].unique()
 
+    # ---- cluster colors ----
     try:
-        # Mapeamento das cores dos clusters
-        clusters_colors: dict = dict(
-            zip([str(i) for i in range(len(adata.uns[f"{clusters_col}_colors"]))], adata.uns[f"{clusters_col}_colors"])
-        )
+        clusters = adata.obs[clusters_col].cat.categories
+        colors = adata.uns[f"{clusters_col}_colors"]
+        clusters_colors = dict(zip(clusters, colors))
     except KeyError:
-        clusters_colors: dict = {}
+        clusters_colors = {}
 
-    # Determinar o número de subplots baseado no número de amostras
+    # ---- subplot grid ----
     num_samples = len(keynames)
-    rows = (num_samples + cols - 1) // cols  # Calcular número de linhas
+    rows = int(np.ceil(num_samples / cols))
 
-    fig, axs = plt.subplots(rows, cols, figsize=(24, 5 * rows))  # Ajustar altura da figura
-    axs = axs.flatten()  # Para indexação simples
+    fig, axs = plt.subplots(rows, cols, figsize=(6 * cols, 5 * rows))
 
-    # Iterar sobre as amostras para plotar
+    if isinstance(axs, np.ndarray):
+        axs = axs.flatten()
+    else:
+        axs = [axs]
+
+    # ---- plot each sample ----
     for i, library in enumerate(keynames):
-        ad = adata[adata.obs['batch'] == library, :].copy()  # Uso correto de pandas slicing
+
+        ad = adata[adata.obs["batch"] == library].copy()
 
         try:
             palette = [
-                v for k, v in clusters_colors.items()
-                if k in ad.obs[f'{clusters_col}'].unique().tolist()
+                clusters_colors[c]
+                for c in ad.obs[clusters_col].cat.categories
+                if c in clusters_colors
             ]
-            if not palette:
-                raise ValueError("palette vazia")
-        except KeyError:
-            palette = plt.get_cmap('tab20')
 
+            if len(palette) == 0:
+                raise ValueError
+
+        except Exception:
+            palette = "tab20"
 
         sc.pl.spatial(
             ad,
             img_key="hires",
             library_id=library,
-            color=f"{clusters_col}",
+            color=clusters_col,
             size=size,
             legend_loc=None,
             show=False,
             scale_factor=scale_factor,
             frameon=False,
             palette=palette,
-            title='' if not include_titles else library  # Define o título como vazio se include_titles for False
+            ax=axs[i]
         )
-        if include_titles:
-            axs[i].set_title(library, fontsize=25)  # Tamanho da fonte do título ajustado para 25
 
-    # Remover eixos não utilizados se houver menos amostras que subplots
+        if include_titles:
+            axs[i].set_title(library, fontsize=18)
+
+    # ---- remove empty axes ----
     for j in range(i + 1, len(axs)):
         fig.delaxes(axs[j])
 
     plt.tight_layout()
+
+    # ---- save figure ----
     if output_file:
-        if not os.path.exists(os.path.dirname(output_file)):#type: ignore
-            os.makedirs(os.path.dirname(output_file))#type: ignore
-        plt.savefig(f"{output_file}_{library}.png", format="png", dpi=dpi)
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
+        plt.savefig(output_file, dpi=dpi, bbox_inches="tight")
+
     plt.show()
 
 def plot_single_spatial_image(
@@ -603,251 +611,294 @@ def outlier_quality(
         add_line = True,
         add_outliers = True,
         metric_to_show = "median", # mean also possible
+        ax=None,  # New parameter to accept an axis
+        show=True,
         **kwargs
     ):
-    """
-    Plot a violin plot of the quality metrics of all samples.
+        """
+    
+        Function to plot outlier quality with additional customization options.
 
-    Parameters
-    ----------
-    path_to_directory : str
-        Path to the directory containing the .h5ad files.
-    clusters_col : str
-        Column name in the AnnData object containing the quality metric to be plotted.
-    group_by : str
-        Column name in the AnnData object containing the group information.
-    outlier : int
-        The k value from the MAD outlier detection.
-    figsize : tuple
-        The size of the figure.
-    title : str
-        The title of the figure.
-    xlabel : str
-        The label for the x-axis.
-    ylabel : str
-        The label for the y-axis.
-    outlier_type : str
-        Whether to show the upper or lower bound of the outliers.
-    legend1_pos : tuple
-        The position of the first legend.
-    legend2_pos : tuple
-        The position of the second legend.
-    add_line : bool
-        Whether to add a line to the plot.
-    metric_to_show : str
-        Which metric to show in the line.
-    **kwargs
-            This argument allows you to pass a classification dictionary that associates keys (sample nomenclatures)
-            to a classification group and a corresponding color. Each key in the dictionary represents an identifier 
-            that will be searched for in the file names, while the values must be lists containing the group to be assigned 
-            and the color to be used in the visualization.
+        Parameters
+        ----------
+        ax : matplotlib.axes.Axes, optional
+            The axis to plot on. If None, a new figure and axis will be created.
 
-            Example of use:
-                {
-                    “GOR“: [”Good”, ‘deepskyblue’],
-                    “PAR“: [”Partial”, ‘Khaki’],
-                    “POR“: [”Poor”, ‘coral’]
-                }
+        Parameters
+        ----------
+        path_to_directory : str
+            Path to the directory containing the .h5ad files.
+        clusters_col : str
+            Column name in the AnnData object containing the quality metric to be plotted.
+        group_by : str
+            Column name in the AnnData object containing the group information.
+        outlier : int
+            The k value from the MAD outlier detection.
+        figsize : tuple
+            The size of the figure.
+        title : str
+            The title of the figure.
+        xlabel : str
+            The label for the x-axis.
+        ylabel : str
+            The label for the y-axis.
+        outlier_type : str
+            Whether to show the upper or lower bound of the outliers.
+        legend1_pos : tuple
+            The position of the first legend.
+        legend2_pos : tuple
+            The position of the second legend.
+        add_line : bool
+            Whether to add a line to the plot.
+        metric_to_show : str
+            Which metric to show in the line.
+        **kwargs
+                This argument allows you to pass a classification dictionary that associates keys (sample nomenclatures)
+                to a classification group and a corresponding color. Each key in the dictionary represents an identifier 
+                that will be searched for in the file names, while the values must be lists containing the group to be assigned 
+                and the color to be used in the visualization.
 
-            In this example, “GOR”, “PAR” and “POR” are keys that correspond to different types of samples. The lists 
-            associated with each key specify the group (e.g. “Good”) and the color (e.g. “deepskyblue”) that will be used in the 
-            will be used in the graphical representation.
+                Example of use:
+                    {
+                        “GOR“: [”Good”, ‘deepskyblue’],
+                        “PAR“: [”Partial”, ‘Khaki’],
+                        “POR“: [”Poor”, ‘coral’]
+                    }
 
+                In this example, “GOR”, “PAR” and “POR” are keys that correspond to different types of samples. The lists 
+                associated with each key specify the group (e.g. “Good”) and the color (e.g. “deepskyblue”) that will be used in the 
+                will be used in the graphical representation.
 
-    Returns
-    -------
-    None. Shows a figure.
-    """
-    classification_dict = {}
-    colors = {}
-    for key in kwargs:
-        classification_dict[key] = kwargs[key][0]
-        if len(kwargs[key]) > 1:
-            colors[key] = kwargs[key][1]
-
-    # Verificar se existem arquivos .h5ad dentro da pasta
-    files = [os.path.join(path_to_directory, i) for i in os.listdir(path_to_directory) if i.endswith(".h5ad")]
-
-    names = []
-    for name in files:
-        name = os.path.basename(name).replace(".h5ad", "")
-        names.append(name)
-
-    # Verifications needed
-    if not files:
-        print(f"Aviso: Nenhum arquivo .h5ad encontrado em {path_to_directory}")
-        return
-
-    if classification_dict is None:
-        raise ValueError("O dicionário de classificação 'classification_dict' deve ser fornecido.")
-
-    # read all files and process them with quality metrics provided by scanpy
-    adatas = [sc.read(file) for file in files] # type: ignore
-
-    for adata in adatas:
-        if adata.var["gene_ids"].str.startswith("ENSG")[0] == True:
-            adata.var["mt"] = adata.var_names.str.startswith("MT-")
-        else:
-            adata.var["mt"] = adata.var["gene_ids"].str.startswith("MT-")
-        sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
-
-    # make sure that all the gene names are unique
-    adata.var_names_make_unique()
-
-    # Create lists to store data limits of the outliers and Iterating on the data to collect information
-    all_data = []
-    outliers = {}
-    for i, adata in enumerate(adatas):
-        data = pd.DataFrame({
-            clusters_col: adata.obs[clusters_col],
-            'sample': names[i]
-        })
-        all_data.append(data)
+            
+        Returns
+        -------
+        None. Shows a figure.
         
+        """
+        # If no axis is provided, create a new figure and axis
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
+
+        classification_dict = {}
+        colors = {}
+        for key in kwargs:
+            # Validate that kwargs[key] is a list with at least one element
+            if isinstance(kwargs[key], list) and len(kwargs[key]) > 0:
+                classification_dict[key] = kwargs[key][0]
+                if len(kwargs[key]) > 1:
+                    colors[key] = kwargs[key][1]
+            else:
+                raise ValueError(f"Invalid format for classification_dict[{key}]: Expected a list with at least one element.")
+
+        # Verificar se existem arquivos .h5ad dentro da pasta
+        files = sorted([os.path.join(path_to_directory, i) for i in os.listdir(path_to_directory) if i.endswith(".h5ad")])
+
+        names = [os.path.basename(f).replace(".h5ad", "") for f in files]
+
+        # Verifications needed
+        if not files:
+            print(f"Aviso: Nenhum arquivo .h5ad encontrado em {path_to_directory}")
+            return
+
+        if classification_dict is None:
+            raise ValueError("O dicionário de classificação 'classification_dict' deve ser fornecido.")
+
+        # read all files and process them with quality metrics provided by scanpy
+        adatas = [sc.read(file) for file in files] # type: ignore
+
+        for adata in adatas:
+            if adata.var["gene_ids"].str.startswith("ENSG").iloc[0] == True:
+                adata.var["mt"] = adata.var_names.str.startswith("MT-")
+            else:
+                adata.var["mt"] = adata.var["gene_ids"].str.startswith("MT-")
+            sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
+
+        # make sure that all the gene names are unique
+        adata.var_names_make_unique()
+
+        # Create lists to store data limits of the outliers and Iterating on the data to collect information
+        all_data = []
+        outliers = {}
+        for i, adata in enumerate(adatas):
+            data = pd.DataFrame({
+                clusters_col: adata.obs[clusters_col],
+                'sample': names[i]
+            })
+            all_data.append(data)
+            
+            if add_outliers:
+                # Calculating the value of outliers in each sample
+                col = adata.obs[clusters_col]
+                median = np.median(col)
+                mad = np.median(np.abs(col - median))#type: ignore
+                k = outlier
+                upper_bound = median + k * mad
+                lower_bound = median - k * mad
+                
+                # storing the lower and upper bounds in a dictionary
+                outliers[names[i]] = (lower_bound, upper_bound)
+
+        # Concatenating all the dataframes
+        percentages = pd.concat(all_data, ignore_index=True)
+
+        # Classifying each sample using the sample_classifier function
+        percentages[group_by] = percentages["sample"].apply(lambda x: sample_classifier(x, classification_dict))
+
+        # Creating a custom order
+        ClassificationOrder = namedtuple('ClassificationOrder', classification_dict.keys())
+
+        custom_order = {key: idx for idx, key in enumerate(classification_dict)}
+
+        # Creating a new column 'order' based on custom_order
+        percentages['order'] = percentages[group_by].map(custom_order)
+
+        # Order the numbers after "P"
+        percentages['number'] = percentages["sample"].apply(extract_P_number)
+        
+        # Create a combined sort key: order (0,1,2...) + number (1-31)
+        # This ensures proper sorting: GOR comes first, then PAR, then POR
+        # Within each group, samples are sorted by number
+        percentages['sort_key'] = percentages['order'] * 1000 + percentages['number']
+
+        # Order the dataframe based on the combined sort key and get unique samples
+        sorted_names = sorted(percentages['sample'].unique(), key=lambda x: extract_P_number(x))
+
+        # Atualizar a plotagem com base na ordem correta
+        positions = range(len(sorted_names))
+        width = 0.4  # Largura para o violino
+        box_width = width * 0.3  # Largura para o boxplot, menor que a largura do violino
+
+        # Use existing axis if provided, otherwise ensure `fig` is defined
+        if ax is None:
+            fig, ax = plt.subplots(figsize=figsize)
+        else:
+            fig = ax.figure
+
+        # Adicionar os gráficos para cada amostra
+        for i, sample in enumerate(sorted_names):
+            sample_data = percentages[percentages['sample'] == sample][clusters_col]
+            group = percentages[percentages['sample'] == sample][group_by].iloc[0]
+            if group == "Unknown":
+                print(f"{sample} não foi possível de ser identificado com nenhum dos códigos entregues!")
+
+            # Add violinplot
+            parts = ax.violinplot(sample_data, positions=[i], widths=width, showmeans=False, showmedians=False, showextrema=False)
+            for pc in parts['bodies']:# type: ignore
+                pc.set_facecolor(colors[group])
+                pc.set_edgecolor('black')
+                pc.set_alpha(1)
+
+            # Add boxplot
+            ax.boxplot(sample_data, positions=[i], widths=box_width, patch_artist=True,
+                    boxprops=dict(facecolor='white', color='black'),
+                    medianprops=dict(color='black'),
+                    whiskerprops=dict(color='black'),
+                    capprops=dict(color='black'),
+                    flierprops=dict(color='black', markeredgecolor='black', markersize=3))
+
+        # Configure the possible titles
+        if title == "":
+            if clusters_col == "pct_counts_mt":
+                title = 'Percentage of mitochondrial genes per spot in different samples'
+                if ylabel == "":
+                    ylabel = "Percentage of expressed mitochondrial genes"
+            elif clusters_col == "log1p_n_genes_by_counts":
+                title = "Number of genes per spot in different samples"
+                if ylabel == "":
+                    ylabel = "log1p of number of genes"
+        if xlabel == "":
+            xlabel = "Samples"
+
+        ax.set_title(title, fontsize=20)
+        ax.set_xlabel(xlabel, fontsize=25)
+        ax.set_ylabel(ylabel, fontsize=18)
+
+        # Rotate x-axis labels
+        ax.set_xticks(positions)
+        ax.set_xticklabels(sorted_names, rotation=90, fontsize=16)
+
+        # Add line
+        if add_line:
+            if metric_to_show == "mean":
+                metric = "Mean"
+                sample_mean = percentages[clusters_col].mean()
+                ax.axhline(y=sample_mean, linestyle='--', color="brown", label=metric)
+            elif metric_to_show == "median":
+                metric = "Median"
+                sample_median = percentages[clusters_col].median()
+                ax.axhline(y=sample_median, linestyle='--', color="brown", label=metric)
+
         if add_outliers:
-            # Calculating the value of outliers in each sample
-            col = adata.obs[clusters_col]
-            median = np.median(col)
-            mad = np.median(np.abs(col - median))#type: ignore
-            k = outlier
-            upper_bound = median + k * mad
-            lower_bound = median - k * mad
-            
-            # storing the lower and upper bounds in a dictionary
-            outliers[names[i]] = (lower_bound, upper_bound)
+            for tick, sample in enumerate(sorted_names):
+                lower, upper = outliers[sample]  # Pegar os limites de outliers para a amostra atual
+                xpos = tick  # Posição da amostra atual no gráfico
 
-    # Concatenating all the dataframes
-    percentages = pd.concat(all_data, ignore_index=True)
+                if outlier_type == "upper":
+                    # Plotar a linha superior (upper bound) para o outlier
+                    ax.plot([xpos - 0.5, xpos + 0.5], [upper, upper], color="red")
+                    if tick == 0:
+                        ax.plot([xpos - 0.5, xpos + 0.5], [upper, upper], color="red", label='Outlier')
+                
+                elif outlier_type == "lower":
+                    # Plotar a linha inferior (lower bound) para o outlier
+                    ax.plot([xpos - 0.5, xpos + 0.5], [lower, lower], color="red")
+                    if tick == 0:
+                        ax.plot([xpos - 0.5, xpos + 0.5], [lower, lower], color="red", label='Outlier')
 
-    # Classifying each sample using the sample_classifier function
-    percentages[group_by] = percentages["sample"].apply(lambda x: sample_classifier(x, classification_dict))
-
-    # Creating a custom order
-    ClassificationOrder = namedtuple('ClassificationOrder', classification_dict.keys())
-
-    custom_order = {key: idx for idx, key in enumerate(classification_dict)}
-
-    # Creating a new column 'order' based on custom_order
-    percentages['order'] = percentages[group_by].map(custom_order)
-
-    # Order the numbers after "P"
-    percentages['number'] = percentages["sample"].apply(extract_P_number)
-
-    # Order the dataframe based on the "P" number and the 'order' column
-    sorted_names = percentages.sort_values(by=['order', 'number'])['sample'].unique()
-
-    # Create a figure
-    fig, ax = plt.subplots(figsize=figsize)
-
-    # Atualizar a plotagem com base na ordem correta
-    positions = range(len(sorted_names))
-    width = 0.4  # Largura para o violino
-    box_width = width * 0.3  # Largura para o boxplot, menor que a largura do violino
-
-    # Add plots to every sample
-    for i, sample in enumerate(sorted_names):
-        sample_data = percentages[percentages['sample'] == sample][clusters_col]
-        group = percentages[percentages['sample'] == sample][group_by].iloc[0]
-        if group == "Unknown":
-            print(f"{sample} não foi possível de ser identificado com nenhum dos códigos entregues!")
-
-        # Add violinplot
-        parts = ax.violinplot(sample_data, positions=[i], widths=width, showmeans=False, showmedians=False, showextrema=False)
-        for pc in parts['bodies']:# type: ignore
-            pc.set_facecolor(colors[group])
-            pc.set_edgecolor('black')
-            pc.set_alpha(1)
-
-        # Add boxplot
-        ax.boxplot(sample_data, positions=[i], widths=box_width, patch_artist=True,
-                boxprops=dict(facecolor='white', color='black'),
-                medianprops=dict(color='black'),
-                whiskerprops=dict(color='black'),
-                capprops=dict(color='black'),
-                flierprops=dict(color='black', markeredgecolor='black', markersize=3))
-
-    # Configure the possible titles
-    if title == "":
-        if clusters_col == "pct_counts_mt":
-            title = 'Porcentagem de genes mitocondriais por spot em diferentes amostras'
-            if ylabel == "":
-                ylabel = "Porcentagem de genes mitocondriais expressos"
-        elif clusters_col == "log1p_n_genes_by_counts":
-            title = "Número de genes por spot em diferentes amostras"
-            if ylabel == "":
-                ylabel = "Log1p do número de genes"
-    if xlabel == "":
-        xlabel = "Amostras"
-
-    ax.set_title(title, fontsize=20)
-    ax.set_xlabel(xlabel, fontsize=25)
-    ax.set_ylabel(ylabel, fontsize=18)
-
-    # Rotate x-axis labels
-    ax.set_xticks(positions)
-    ax.set_xticklabels(sorted_names, rotation=60, fontsize=16)
-
-    # Add line
-    if add_line:
-        if metric_to_show == "mean":
-            metric = "Mean"
-            sample_mean = percentages[clusters_col].mean()
-            ax.axhline(y=sample_mean, linestyle='--', color="brown", label=metric)
-        elif metric_to_show == "median":
-            metric = "Median"
-            sample_median = percentages[clusters_col].median()
-            ax.axhline(y=sample_median, linestyle='--', color="brown", label=metric)
-
-    if add_outliers:
-        for tick, sample in enumerate(sorted_names):
-            lower, upper = outliers[sample]  # Pegar os limites de outliers para a amostra atual
-            xpos = tick  # Posição da amostra atual no gráfico
-
-            if outlier_type == "upper":
-                # Plotar a linha superior (upper bound) para o outlier
-                ax.plot([xpos - 0.5, xpos + 0.5], [upper, upper], color="red")
-                if tick == 0:
-                    ax.plot([xpos - 0.5, xpos + 0.5], [upper, upper], color="red", label='Outlier')
-            
-            elif outlier_type == "lower":
-                # Plotar a linha inferior (lower bound) para o outlier
-                ax.plot([xpos - 0.5, xpos + 0.5], [lower, lower], color="red")
-                if tick == 0:
-                    ax.plot([xpos - 0.5, xpos + 0.5], [lower, lower], color="red", label='Outlier')
-
-    # Add legends for lines and patches
-    legend_patches = [
-        _mpatches.Patch(color=colors[key], label=value)
-        for key, value in classification_dict.items()
-    ]
-
-    # Inicializa legend_lines como uma lista vazia
-    legend_lines = []
-
-    # Define legend_lines com base nas opções de add_line e add_outliers
-    if add_line and add_outliers:
-        legend_lines = [
-            _Line2D([0], [0], color='red', lw=2, label='Outlier'),
-            _Line2D([0], [0], color='brown', lw=2, label=metric)
+        # Add legends for lines and patches
+        legend_patches = [
+            _mpatches.Patch(color=colors[key], label=value)
+            for key, value in classification_dict.items()
         ]
-    elif add_line:
-        legend_lines = [
-            _Line2D([0], [0], color='brown', lw=2, label=metric)
-        ]
-    elif add_outliers:
-        legend_lines = [_Line2D([0], [0], color='red', lw=2, label='Outlier')]
 
-    legend1 = ax.legend(handles=legend_patches, title=group_by, loc='upper left', bbox_to_anchor=legend1_pos, fontsize=12, title_fontsize=12)
+        # Inicializa legend_lines como uma lista vazia
+        legend_lines = []
 
-    # Apenas cria legend2 se legend_lines não estiver vazio
-    if legend_lines:
-        legend2 = ax.legend(handles=legend_lines, title="Linhas", loc='upper left', bbox_to_anchor=legend2_pos, fontsize=12, title_fontsize=12)
-        ax.add_artist(legend1)
+        # Define legend_lines com base nas opções de add_line e add_outliers
+        if add_line and add_outliers:
+            legend_lines = [
+                _Line2D([0], [0], color='red', lw=2, label='Outlier'),
+                _Line2D([0], [0], color='brown', lw=2, label=metric)
+            ]
+        elif add_line:
+            legend_lines = [
+                _Line2D([0], 
+                        [0], 
+                        color='brown', 
+                        lw=2, 
+                        label=metric
+                        )
+            ]
+        elif add_outliers:
+            legend_lines = [_Line2D([0], 
+                                    [0], 
+                                    color='red', 
+                                    lw=2, 
+                                    label='Outlier'
+                                    )]
 
-    fig.tight_layout()
-    plt.show()
+        legend1 = ax.legend(handles=legend_patches, title=group_by, loc='upper left', bbox_to_anchor=legend1_pos, fontsize=12, title_fontsize=12)
 
-def corr_spearman(adata: AnnData, corr_matrix, pval_matrix):
+        # Apenas cria legend2 se legend_lines não estiver vazio
+        if legend_lines:
+            legend2 = ax.legend(handles=legend_lines, 
+                                title="Linhas", 
+                                loc='upper left', 
+                                bbox_to_anchor=legend2_pos, 
+                                fontsize=12, 
+                                title_fontsize=12
+                                )
+            
+            ax.add_artist(legend1)
+
+        fig.tight_layout()
+        if show:
+            plt.show()
+
+def corr_spearman(adata: AnnData, 
+                  corr_matrix, 
+                  pval_matrix
+                  ):
     # Extrair os nomes das colunas sem cortar errado
     names = [col.replace("q05cell_abundance_w_sf_", "") 
             for col in adata.obsm["q05_cell_abundance_w_sf"].columns]
@@ -937,43 +988,17 @@ def plot_bar_by_group(adata: AnnData, clusters_col: str = "leiden_0.5") -> None:
 
 
 if __name__ == "__main__":
-    # example of use:
-    # classification_dict: dict[str, list[str]] = {
-    #     "PAR": ["Partial", "Khaki"],
-    #     "GOR": ["Good", "deepskyblue"],
-    #     "POR": ["Poor", "coral"]
-    # }
+    import scanpy as sc
+    import spatools as st
+    from spatools.constants import COLORS_23_HEX
 
-    # # calling the function outlier_quality
-    # outlier_quality(
-    #     path_to_directory=r"D:\My_decon_package\My_decon_package\data\raw",
-    #     # clusters_col="log1p_n_genes_by_counts",
-    #     clusters_col= "log1p_n_genes_by_counts",
-    #     group_by="response",
-    #     outlier_type="lower",
-    #     outlier=4,
-    #     legend1_pos=(0.75, 0.25),
-    #     legend2_pos=(0.88, 0.25),
-    #     **classification_dict #type: ignore
-    # )
-    #  example of use:
-    classification_dict: dict[str, list[str]] = {
-        "GOR": ["Good", "deepskyblue"],
-        "PAR": ["Partial", "Khaki"],
-        "POR": ["Poor", "coral"]
-    }
+    adata = sc.read("/mnt/SATA/spatialPaper/output/spatialPaperv2_condition.h5ad")
 
-    # calling the function outlier_quality
-    outlier_quality(
-        path_to_directory=r"/home/pedrovideira/Desktop/pack_v1/data/outlier",
-        # clusters_col="pct_counts_mt",
-        clusters_col= "pct_counts_mt",
-        group_by="response",
-        outlier_type="upper",
-        outlier=4,
-        add_line=True,
-        add_outliers=False,
-        # legend1_pos=(0.75, 0.25),
-        # legend2_pos=(0.88, 0.25),
-        **classification_dict #type: ignore
+    n_clusters = len(adata.obs["leiden_0.5"].cat.categories)
+    adata.uns["leiden_0.5_colors"] = COLORS_23_HEX[:n_clusters]
+
+    st.pl.plot_spatial_clusters(
+        adata=adata,
+        clusters_col="leiden_0.5",
+        cols=8
     )

@@ -1,6 +1,4 @@
 import os
-DIR = os.path.join(os.path.abspath(os.path.join(os.path.dirname(__file__),"..")))
-DATA = os.path.join(DIR, "data")
 
 # dictionary of colors
 COLORS_23 = {

@@ -86,3 +86,20 @@ def pipeline_MAD_no_mt(adatas_dict, **kwargs):
         mt_percentage_outliers=False,
         **kwargs
     )
+
+if __name__ == "__main__":
+    from preprocessing_ import Preprocessing
+    import scanpy as sc
+    import os
+
+    # 1. Mapeie e carregue seus arquivos
+    data_dir = "/mnt/SATA/spatialPaper/data/corrected"
+    files = [f for f in os.listdir(data_dir) if f.endswith('.h5ad')]
+
+    # Criando o dicionário {nome: objeto_adata}
+    meu_dict_adatas = {f.replace('.h5ad', ''): sc.read_h5ad(os.path.join(data_dir, f)) for f in files}
+
+    # 2. Agora sim, rode o preprocessing
+    mydata = Preprocessing.run("MAD_combined", adatas_dict=meu_dict_adatas, save_files=False)
+
+    print(mydata)

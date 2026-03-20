@@ -3,7 +3,10 @@ import json
 import numpy as np
 import pandas as pd
 import scanpy as sc
+import anndata as an
 from PIL import Image
+from pathlib import Path
+from anndata import AnnData
 
 # ==========================================
 # 1. Registry System (The Internal "Engine")
@@ -159,7 +162,7 @@ def _detect_format(dir_path: str) -> str:
 # ==========================================
 # 4. Public API (Try-Except Cascade)
 # ==========================================
-def read(dir_path: str = None, **kwargs) -> dict:
+def read(dir_path: str = None, **kwargs) -> dict | AnnData:
     dir_path = dir_path or os.getcwd()
     dictionary = {}
     ordem_tentativas = ["h5ad", "visium", "free"]
@@ -167,6 +170,12 @@ def read(dir_path: str = None, **kwargs) -> dict:
     if not os.path.exists(dir_path):
         print(f"❌ Erro: O diretório {dir_path} não existe.")
         return {}
+    
+    if dir_path.endswith(".h5ad"):
+        return an.read_h5ad(dir_path)
+    if os.listdir(dir_path) == ["spatial", "filtered_feature_bc_matrix.h5"] or os.listdir(dir_path) == ["filtered_feature_bc_matrix.h5", "spatial"]:
+        return read_free_dir(dir_path)
+    
 
     print(f"🔎 Analisando diretório: {dir_path}")
 
@@ -182,7 +191,7 @@ def read(dir_path: str = None, **kwargs) -> dict:
         for fmt in ordem_tentativas:
             try:
                 adata = READERS[fmt](item_path, **kwargs)
-                dictionary[item_name] = adata
+                dictionary[Path(item_name).stem] = adata
                 print(f"✅ Lido como [{fmt.upper()}]")
                 sucesso = True
                 break
@@ -197,3 +206,12 @@ def read(dir_path: str = None, **kwargs) -> dict:
             print(f"❌ Falha. ({msg_erro})")
 
     return dictionary
+
+
+if __name__ == "__main__":
+    import spatools as st
+    adata = st.read("/mnt/SATA/spatialPaper/data/newData/P30_GOR_S4")
+
+    import squidpy as sq
+    adata.obs["color"] = "#669ce4"
+    sq.pl.spatial_scatter(adata, color = "color", alpha = 0.8)

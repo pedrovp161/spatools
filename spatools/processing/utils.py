@@ -1,4 +1,5 @@
 from anndata import ImplicitModificationWarning
+import scanpy as sc
 import numpy as np
 import warnings
 import os

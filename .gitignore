@@ -10,3 +10,10 @@ token.txt
 notebooks
 scripts
 Tutorials/data
+spatools/__pycache__/constants.cpython-311.pyc
+spatools/__pycache__/__init__.cpython-311.pyc
+spatools/processing/__pycache__/utils.cpython-311.pyc
+spatools/processing/__pycache__/preprocessing_.cpython-311.pyc
+spatools/reading/__pycache__/read_.cpython-311.pyc
+spatools/processing/__pycache__/utils.cpython-311.pyc
+spatools/processing/__pycache__/preprocessing_.cpython-311.pyc

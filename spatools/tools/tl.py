@@ -662,15 +662,19 @@ class SelectionTool:
         self.line_artist = None
         self.is_drawing: bool = False  # TODO
 
+        # update time
         self.last_update: float = 0.0
         self.min_update_time: Final = 0.01
         self.a: int = 0
+
+        # parameters
         self.alpha = 0.4
+        self.spot = 10
 
     def process_dir(self, dir):
         if os.path.isfile(dir):
             if dir.endswith(".h5ad"):
-                result = st.read(dir)
+                result = read(dir)
                 assert isinstance(result, AnnData), "Expected a single AnnData"
                 self.adata: AnnData = result
                 self.sample: str = os.path.basename(dir)
@@ -686,12 +690,12 @@ class SelectionTool:
 
         # Spots não selecionados
         self.ax.scatter(scaled_coords[:, 0], scaled_coords[:, 1], 
-                        c="lightgray", s=7, alpha=self.alpha, edgecolors='none')
+                        c="lightgray", s=self.spot-3, alpha=self.alpha, edgecolors='none')
 
         # Spots selecionados
         if np.any(self.selected):
             sel = scaled_coords[self.selected]
-            self.ax.scatter(sel[:, 0], sel[:, 1], c="red", s=10, edgecolors='none')
+            self.ax.scatter(sel[:, 0], sel[:, 1], c="red", s=self.spot, edgecolors='none')
 
         self.ax.set_title("Lasso: Hold and drag | [a] Salvar | [c] Limpar | [w] Write anndata")
         self.fig.canvas.draw_idle()
@@ -712,25 +716,28 @@ class SelectionTool:
         self.line_artist, = self.ax.plot([], [], color="cyan", lw=2)
 
     def on_move(self, event):
-        current_time = perf_counter()
-        self.a += 1
+            # 1. Sai imediatamente se não estiver desenhando ou estiver fora do gráfico
+            if not self.is_drawing or event.inaxes != self.ax:
+                return
 
-        if not self.is_drawing or event.inaxes != self.ax:
-            return
+            # (Opcional) Contador de debug - movido para cá para contar apenas os eventos válidos
+            self.a += 1 
 
-        current_time = perf_counter()
+            # 2. Verifica o tempo apenas se o evento for válido
+            current_time = perf_counter()
+            if current_time - self.last_update < self.min_update_time:
+                return
 
-        if current_time - self.last_update < self.min_update_time:
-            return
+            # 3. Atualiza os vértices e o desenho
+            self.verts.append((event.xdata, event.ydata))
 
-        self.verts.append((event.xdata, event.ydata))
+            if len(self.verts) > 1:
+                x, y = zip(*self.verts)
+                self.line_artist.set_data(x, y)
+                self.line_artist.figure.canvas.draw_idle()
 
-        if len(self.verts) > 1:
-            x, y = zip(*self.verts)
-            self.line_artist.set_data(x, y)
-            self.line_artist.figure.canvas.draw_idle()
-
-        self.last_update = current_time
+            # 4. Atualiza o último tempo registrado
+            self.last_update = current_time
 
     def on_release(self, event):
         if not self.is_drawing:
@@ -774,34 +781,50 @@ class SelectionTool:
             print(f"Sucesso! {np.sum(self.selected)} spots selecionados.")
             self.adata.obs["selected_area"] = self.adata.obs["selected_area"].map({True: "Selected", False: "Not selected"})
             return self.adata
+        
         elif event.key == "c":
             self.selected[:] = False
             self.plot()
+
         elif event.key == "q":
             plt.close(self.fig)
+
         elif event.key == "up":
             self.scale = self.hires_scale
             self.sacale_mode = "Hiers"
             print("Switched to HIERS")
             self.plot()
+
         elif event.key == "down":
             self.scale = self.lowres_scale
             self.scale_mode = "Lowres"
             print("Switched to LOWRES")
             self.plot()
+
         elif event.key == "left":
             self.scale -= 0.005
             print(self.scale)
             self.plot()
+
         elif event.key == "right":
             self.scale += 0.005
             print(self.scale)
             self.plot()
+
         elif event.key == "d":
             self.scale = 0.998 # default
             self.plot()
+
         elif event.key == "w":
             self.adata.write_h5ad(filename=os.path.join(self.dir, self.sample))
+
+        elif event.key == "s":
+            self.spot += 1
+            self.plot()
+            
+        elif event.key == "x":
+            self.spot -= 1
+            self.plot()
 
     def on_scroll(self, event):
 

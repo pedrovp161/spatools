@@ -20,7 +20,7 @@ from scipy.spatial.distance import cdist
 from multiprocessing import Pool, cpu_count
 
 from ..reading import read
-import ..constants as con
+import constants as con
 
 def spatools_check(adata):
     if "spatools" in adata.uns:
@@ -1078,3 +1078,13 @@ def process_image(input_image_path,
     else:
         print("Nenhum círculo foi detectado.")
         return None, None
+
+
+if __name__ == "__main__":
+    from spatools.tools.tl import SelectionTool
+
+    tool: SelectionTool = SelectionTool("/mnt/SATA/spatialPaper/data/corrected")
+    adata = tool.run()
+
+    if "selected_area" in adata.obs.columns:
+        print(adata.obs["selected_area"].value_counts())

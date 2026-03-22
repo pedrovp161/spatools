@@ -162,7 +162,7 @@ def _detect_format(dir_path: str) -> str:
 # ==========================================
 # 4. Public API (Try-Except Cascade)
 # ==========================================
-def read(dir_path: str = None, **kwargs) -> dict | AnnData:
+def read(dir_path: str = "", **kwargs) -> dict | AnnData:
     dir_path = dir_path or os.getcwd()
     dictionary = {}
     ordem_tentativas = ["h5ad", "visium", "free"]
@@ -207,11 +207,3 @@ def read(dir_path: str = None, **kwargs) -> dict | AnnData:
 
     return dictionary
 
-
-if __name__ == "__main__":
-    import spatools as st
-    adata = st.read("/mnt/SATA/spatialPaper/data/newData/P30_GOR_S4")
-
-    import squidpy as sq
-    adata.obs["color"] = "#669ce4"
-    sq.pl.spatial_scatter(adata, color = "color", alpha = 0.8)

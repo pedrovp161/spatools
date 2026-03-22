@@ -6,14 +6,20 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 from skimage import io
+from pmenu_lib import pmenu
 from anndata import AnnData
 from pybiomart import Server
+from time import perf_counter
 from .. import constants as con
 import matplotlib.pyplot as plt
+from matplotlib.path import Path
 from scipy.spatial import distance
-from typing import List, Any, Optional, Union
+from matplotlib.widgets import Slider
+from typing import List, Any, Optional, Union, Final
 from scipy.spatial.distance import cdist
 from multiprocessing import Pool, cpu_count
+
+from ..reading import read
 
 def spatools_check(adata):
     if "spatools" in adata.uns:
@@ -633,6 +639,226 @@ def spearman_correlation_matrix(adata: AnnData,
             corr_matrix.loc[name1, name2] = corr
             pval_matrix.loc[name1, name2] = p_value
     return corr_matrix, pval_matrix
+
+class SelectionTool:
+    def __init__(self, dir: str):
+        print(os.path.basename(dir))
+        self.process_dir(dir)
+        self.dir: str = dir
+
+        # Spatial data
+        self.coords: np.ndarray = np.asanyarray(self.adata.obsm["spatial"])
+        self.image: np.ndarray = self.adata.uns["spatial"][self.sample.replace(".h5ad", "")]["images"]["hires"]
+        self.scales = self.adata.uns["spatial"][self.sample.replace(".h5ad", "")]["scalefactors"]
+
+        self.hires_scale: float = self.scales.get("tissue_hires_scalef", 1.0)
+        self.lowres_scale: float = self.scales.get("tissue_lowres_scalef", 1.0)
+        self.scale: float = self.hires_scale  # default
+        self.scale_mode: str = "hires"
+
+        # States
+        self.selected: np.ndarray = np.zeros(len(self.coords), dtype=bool)
+        self.verts: list = []
+        self.line_artist = None
+        self.is_drawing: bool = False  # TODO
+
+        self.last_update: float = 0.0
+        self.min_update_time: Final = 0.01
+        self.a: int = 0
+        self.alpha = 0.4
+
+    def process_dir(self, dir):
+        if os.path.isfile(dir):
+            if dir.endswith(".h5ad"):
+                result = st.read(dir)
+                assert isinstance(result, AnnData), "Expected a single AnnData"
+                self.adata: AnnData = result
+                self.sample: str = os.path.basename(dir)
+        elif os.path.isdir(dir):
+            self.adata, self.sample = self.menu(dir)
+
+    def plot(self):
+        self.ax.clear()
+        self.ax.imshow(self.image)
+
+        # Aplicar escala às coordenadas originais
+        scaled_coords = self.coords * self.scale
+
+        # Spots não selecionados
+        self.ax.scatter(scaled_coords[:, 0], scaled_coords[:, 1], 
+                        c="lightgray", s=7, alpha=self.alpha, edgecolors='none')
+
+        # Spots selecionados
+        if np.any(self.selected):
+            sel = scaled_coords[self.selected]
+            self.ax.scatter(sel[:, 0], sel[:, 1], c="red", s=10, edgecolors='none')
+
+        self.ax.set_title("Lasso: Hold and drag | [a] Salvar | [c] Limpar | [w] Write anndata")
+        self.fig.canvas.draw_idle()
+
+    def on_press(self, event):
+        if event.inaxes != self.ax:
+            return
+
+        self.is_drawing = True
+        self.verts = [(event.xdata, event.ydata)]
+
+        # conecta o movimento
+        self.motion_cid = self.fig.canvas.mpl_connect("motion_notify_event", self.on_move)
+
+        if self.line_artist:
+            self.line_artist.remove()
+
+        self.line_artist, = self.ax.plot([], [], color="cyan", lw=2)
+
+    def on_move(self, event):
+        current_time = perf_counter()
+        self.a += 1
+
+        if not self.is_drawing or event.inaxes != self.ax:
+            return
+
+        current_time = perf_counter()
+
+        if current_time - self.last_update < self.min_update_time:
+            return
+
+        self.verts.append((event.xdata, event.ydata))
+
+        if len(self.verts) > 1:
+            x, y = zip(*self.verts)
+            self.line_artist.set_data(x, y)
+            self.line_artist.figure.canvas.draw_idle()
+
+        self.last_update = current_time
+
+    def on_release(self, event):
+        if not self.is_drawing:
+            return
+
+        self.is_drawing = False
+
+        # desconecta corretamente usando o ID
+        if hasattr(self, "motion_cid"):
+            self.fig.canvas.mpl_disconnect(self.motion_cid)
+
+        if len(self.verts) > 3:
+            self.verts.append(self.verts[0])
+            path = Path(self.verts)
+
+            scaled_coords = self.coords * self.scale
+
+            inside = path.contains_points(scaled_coords)
+            self.selected |= inside
+
+        if self.line_artist:
+            self.line_artist.remove()
+            self.line_artist = None
+
+        self.verts = []
+
+        self.plot()
+        print(self.a)
+        
+        # Limpeza visual
+        if self.line_artist:
+            self.line_artist.remove()
+            self.line_artist = None
+        
+        self.verts = []
+        self.plot()
+
+    def on_key(self, event):
+        if event.key == "a":
+            self.adata.obs["selected_area"] = self.selected
+            print(f"Sucesso! {np.sum(self.selected)} spots selecionados.")
+            self.adata.obs["selected_area"] = self.adata.obs["selected_area"].map({True: "Selected", False: "Not selected"})
+            return self.adata
+        elif event.key == "c":
+            self.selected[:] = False
+            self.plot()
+        elif event.key == "q":
+            plt.close(self.fig)
+        elif event.key == "up":
+            self.scale = self.hires_scale
+            self.sacale_mode = "Hiers"
+            print("Switched to HIERS")
+            self.plot()
+        elif event.key == "down":
+            self.scale = self.lowres_scale
+            self.scale_mode = "Lowres"
+            print("Switched to LOWRES")
+            self.plot()
+        elif event.key == "left":
+            self.scale -= 0.005
+            print(self.scale)
+            self.plot()
+        elif event.key == "right":
+            self.scale += 0.005
+            print(self.scale)
+            self.plot()
+        elif event.key == "d":
+            self.scale = 0.998 # default
+            self.plot()
+        elif event.key == "w":
+            self.adata.write_h5ad(filename=os.path.join(self.dir, self.sample))
+
+    def on_scroll(self, event):
+
+        if 0.9 > self.alpha:
+            if event.button == 'up':
+                self.alpha += 0.1
+
+        if 0.1 < self.alpha:
+            if event.button == "down":
+                self.alpha -= 0.1
+
+        self.plot()
+
+    def menu(self, directory):
+        run: bool = True
+        while run:
+            try:
+                # Lista arquivos e pastas
+                options = os.listdir(directory)
+            except PermissionError:
+                print(f"without permission to access {directory}")
+                return
+
+            sample: Optional[str] = pmenu(options)
+
+            if not sample:
+                print("Nenhuma opção selecionada. Saindo.")
+                return
+
+            path = os.path.join(directory, sample)
+
+            if not path.endswith(".h5ad"):
+                raise ValueError("File must be in h5ad format")
+
+            if os.path.isfile(path):
+                # Entrar na pasta
+                result = read(path)
+                assert isinstance(result, AnnData), "Expected a single AnnData"
+                adata: AnnData = result
+                run = False
+                return adata, sample
+            else:
+                print("Select a file and not a directory")
+
+    def main(self):
+        self.fig, self.ax = plt.subplots(figsize=(8, 8))
+        self.plot()
+        # Event functions
+        self.fig.canvas.mpl_connect("button_press_event", self.on_press)
+        self.fig.canvas.mpl_connect("button_release_event", self.on_release)
+        self.fig.canvas.mpl_connect("key_press_event", self.on_key)
+        self.fig.canvas.mpl_connect("scroll_event", self.on_scroll)
+        plt.show()
+
+    def run(self) -> AnnData:
+        self.main()
+        return self.adata
 
 # deprecated
 def calculate_distances(args):

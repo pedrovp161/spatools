@@ -20,6 +20,7 @@ from scipy.spatial.distance import cdist
 from multiprocessing import Pool, cpu_count
 
 from ..reading import read
+import ..constants as con
 
 def spatools_check(adata):
     if "spatools" in adata.uns:
@@ -664,12 +665,14 @@ class SelectionTool:
 
         # update time
         self.last_update: float = 0.0
-        self.min_update_time: Final = 0.01
+        self.min_update_time: Final = 0.06
         self.a: int = 0
 
         # parameters
-        self.alpha = 0.4
-        self.spot = 10
+        self.alpha: float = 0.4
+        self.spot: int = 10
+        self.color: str = "lightgray"
+        self.b: int = 0
 
     def process_dir(self, dir):
         if os.path.isfile(dir):
@@ -690,7 +693,7 @@ class SelectionTool:
 
         # Spots não selecionados
         self.ax.scatter(scaled_coords[:, 0], scaled_coords[:, 1], 
-                        c="lightgray", s=self.spot-3, alpha=self.alpha, edgecolors='none')
+                        c=self.color, s=self.spot-3, alpha=self.alpha, edgecolors='none')
 
         # Spots selecionados
         if np.any(self.selected):
@@ -818,13 +821,17 @@ class SelectionTool:
         elif event.key == "w":
             self.adata.write_h5ad(filename=os.path.join(self.dir, self.sample))
 
-        elif event.key == "s":
+        elif event.key == "z":
             self.spot += 1
             self.plot()
             
         elif event.key == "x":
             self.spot -= 1
             self.plot()
+
+        elif event.key == "p":
+            self.color = [i for i in con.COLORS_23_HEX][b]
+            self.b += 1
 
     def on_scroll(self, event):
 

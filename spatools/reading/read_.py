@@ -159,6 +159,30 @@ def _detect_format(dir_path: str) -> str:
         "Check folder structure or manually specify 'format_name'."
     )
 
+# maching names
+def matchName(dir_path, adata):
+    if 'spatial' not in adata.uns:
+        return adata  # evita crash
+    
+    keys = list(adata.uns['spatial'].keys())
+    if len(keys) == 0:
+        return adata
+    
+    old_key = keys[0]
+    new_key = os.path.basename(dir_path).replace(".h5ad", "")
+    
+    if old_key == new_key:
+        return adata  # ✅ sempre retorna
+    
+    # move os dados mantendo integridade
+    adata.uns['spatial'][new_key] = adata.uns['spatial'].pop(old_key)
+    
+    print(f"Renamed spatial key: {old_key} -> {new_key}")
+    
+    return adata
+
+
+
 # ==========================================
 # 4. Public API (Try-Except Cascade)
 # ==========================================
@@ -172,11 +196,15 @@ def read(dir_path: str = "", **kwargs) -> dict | AnnData:
         return {}
     
     if dir_path.endswith(".h5ad"):
-        return an.read_h5ad(dir_path)
-    if os.listdir(dir_path) == ["spatial", "filtered_feature_bc_matrix.h5"] or os.listdir(dir_path) == ["filtered_feature_bc_matrix.h5", "spatial"]:
-        return read_free_dir(dir_path)
+        adata = an.read_h5ad(dir_path)
+        adata = matchName(dir_path = dir_path, adata = adata)
+        return adata
     
-
+    if os.listdir(dir_path) == ["spatial", "filtered_feature_bc_matrix.h5"] or os.listdir(dir_path) == ["filtered_feature_bc_matrix.h5", "spatial"]:
+        adata = read_free_dir(dir_path)
+        adata = matchName(dir_path = dir_path, adata = adata)
+        return adata
+    
     print(f"🔎 Analisando diretório: {dir_path}")
 
     for item_name in sorted(os.listdir(dir_path)):
@@ -191,6 +219,7 @@ def read(dir_path: str = "", **kwargs) -> dict | AnnData:
         for fmt in ordem_tentativas:
             try:
                 adata = READERS[fmt](item_path, **kwargs)
+                adata = matchName(dir_path=item_path, adata=adata)
                 dictionary[Path(item_name).stem] = adata
                 print(f"✅ Lido como [{fmt.upper()}]")
                 sucesso = True

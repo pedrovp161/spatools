@@ -1,4 +1,8 @@
-scanpy
-numpy==1.26.04
-scipy
-openpyxl
+anndata==0.12.11
+matplotlib==3.10.9
+mygene==3.2.2
+pmenu_lib==1.2.2
+pybiomart==0.2.0
+scanpy==1.12.1
+scipy==1.17.1
+scikit-image>=0.22

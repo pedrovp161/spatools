@@ -1,7 +1,80 @@
+from anndata import AnnData
+from typing_extensions import Dict
 import scanpy as sc
 import os
 
 from .utils import save_spatial_files, is_outlier
+
+def anndataFilters(
+    adatas_dict: Dict[str, AnnData],
+    genes_outliers: bool = False,
+    counts_outliers: bool = False,
+    mt_percentage_outliers: bool = True,
+    genes_and_counts_outliers: bool = True,
+    k: float = 4
+) -> Dict[str, AnnData]:
+
+    filtered_adatas = {}
+
+    for sample_id, adata in adatas_dict.items():
+        # Copy to avoid modifying original
+        adata = adata.copy()
+
+        # Setup stats
+        stats = {
+            "sample_id": sample_id,
+            "initial_n_spots": adata.n_obs,
+            "initial_n_genes": adata.n_vars
+        }
+
+        adata.var_names_make_unique()
+
+        # MT genes (robusto)
+        mt_mask = adata.var_names.str.startswith("MT-")
+        if "gene_ids" in adata.var.columns:
+            mt_mask |= adata.var["gene_ids"].str.startswith("MT-")
+
+        adata.var["mt"] = mt_mask
+
+        sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
+
+        # --- Filters ---
+
+        if counts_outliers:
+            mask = is_outlier(adata.obs['log1p_total_counts'], method="low", k=k)
+            adata = adata[~mask, :].copy()
+            stats["n_after_counts_filter"] = adata.n_obs
+
+        if genes_outliers:
+            mask = is_outlier(adata.obs['log1p_n_genes_by_counts'], method="low", k=k)
+            adata = adata[~mask, :].copy()
+            stats["n_after_genes_filter"] = adata.n_obs
+
+        if genes_and_counts_outliers:
+            out_c = is_outlier(x = adata.obs['log1p_total_counts'], method="low", k=k)
+            out_g = is_outlier(x = adata.obs['log1p_n_genes_by_counts'], method="low", k=k)
+            mask = out_c | out_g
+            adata = adata[~mask, :].copy()
+            stats["n_after_combined_filter"] = adata.n_obs
+
+        if mt_percentage_outliers:
+            mask = is_outlier(x = adata.obs["pct_counts_mt"], method="high", k=k)
+            adata = adata[~mask, :].copy()
+            stats["n_after_mt_filter"] = adata.n_obs
+
+        # Remove genes não expressos
+        sc.pp.filter_genes(adata, min_cells=1)
+
+        # Final stats
+        stats["final_n_spots"] = adata.n_obs
+        stats["final_n_genes"] = adata.n_vars
+
+        adata.uns[f"preprocessing_stats_{sample_id}"] = stats
+
+        # Save back
+        filtered_adatas[sample_id] = adata
+
+    return filtered_adatas
 
 def preprocessing(adatas_dict: dict, 
                  output_dir: str = "",
@@ -9,70 +82,26 @@ def preprocessing(adatas_dict: dict,
                  genes_outliers: bool = False, 
                  counts_outliers: bool = False,
                  mt_percentage_outliers: bool = True,
-                 genes_and_counts_outliers: bool = True
-                 ):
+                 genes_and_counts_outliers: bool = True,
+                 k: float = 4
+                 ) -> Dict[str, AnnData]:
     """
     Preprocess Visium data and store unique stats in .uns for later integration.
     """
     
     # Validações iniciais
     if (genes_and_counts_outliers and (genes_outliers or counts_outliers)) or (genes_outliers and counts_outliers):
-        print("Error: Redundant outlier filters selected. Operation terminated.")
-        return
+        raise ValueError("Error: Redundant outlier filters selected. Operation terminated.")
 
     if save_files and not output_dir:
-        print("Error: output_dir must be defined to save files.")
-        return
+        raise ValueError("Error: output_dir must be defined to save files.")
     
-    for i, adata in adatas_dict.items():
-        # Setup
-        stats = {
-            "sample_id": i,
-            "initial_n_spots": adata.n_obs,
-            "initial_n_genes": adata.n_vars
-        }
-        
-        adata.var_names_make_unique()
-
-        # Identification o MT genes
-        mt_mask = adata.var_names.str.startswith("MT-") | \
-                  adata.var["gene_ids"].str.startswith("MT-", na=False)
-        
-        adata.var["mt"] = mt_mask
-        sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
-
-        # Applying filters (MAD)
-        if counts_outliers:
-            mask = is_outlier(adata.obs['log1p_total_counts'], method="low")
-            adata = adata[~mask, :].copy()
-            stats["n_after_counts_filter"] = adata.n_obs
-            
-        if genes_outliers:
-            mask = is_outlier(adata.obs['log1p_n_genes_by_counts'], method="low")
-            adata = adata[~mask, :].copy()
-            stats["n_after_genes_filter"] = adata.n_obs
-
-        if genes_and_counts_outliers:
-            out_c = is_outlier(adata.obs['log1p_total_counts'], method="low")
-            out_g = is_outlier(adata.obs['log1p_n_genes_by_counts'], method="low")
-            mask = out_c | out_g
-            adata = adata[~mask, :].copy()
-            stats["n_after_combined_filter"] = adata.n_obs
-        
-        if mt_percentage_outliers:
-            mask = is_outlier(adata.obs["pct_counts_mt"], method="high")
-            adata = adata[~mask, :].copy()
-            stats["n_after_mt_filter"] = adata.n_obs
-
-        sc.pp.filter_genes(adata, min_cells=1)
-        
-        # Adding final stats
-        stats["final_n_spots"] = adata.n_obs
-        stats["final_n_genes"] = adata.n_vars
-
-        adata.uns[f"preprocessing_stats_{i}"] = stats
-        
-        adatas_dict[i] = adata
+    adatas_dict = anndataFilters(adatas_dict = adatas_dict,
+                   genes_outliers = genes_outliers,
+                   counts_outliers = counts_outliers,
+                   mt_percentage_outliers = mt_percentage_outliers,
+                   genes_and_counts_outliers = genes_and_counts_outliers,
+                   k = k)
 
     # Saving files if needed
     if save_files:

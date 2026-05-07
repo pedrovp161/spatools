@@ -1,20 +1,27 @@
 from .tl import (
-    process_image,
-    remove_random_rows,
-    convert_df_ens,
-    convert_anndata_ens,
-    merge_clusters,
     correlate_distances,
-    z_score
+    remove_random_rows,
+    translate_anndata_genes,
+    merge_clusters,
+    remove_spots,
+    z_score,
+    spatial_spearman,
+    spearman_correlation_matrix,
+    SelectionTool,
+    mesure_distances,
+    check_spots_analysed
 )
 
 __all__ = [
     'correlate_distances',
-    "z_score",
-    'convert_df_ens',
     'remove_random_rows',
-    'convert_anndata_ens',
+    'translate_anndata_genes',
     'merge_clusters',
-    "z_score",
-    "process_image"
+    'remove_spots',
+    'z_score',
+    'spatial_spearman',
+    'spearman_correlation_matrix',
+    'SelectionTool',
+    'mesure_distances',
+    'check_spots_analysed'
 ]

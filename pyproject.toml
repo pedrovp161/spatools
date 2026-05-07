@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # PEP 621 metadata section.
 [project]
 name = "spatools"               # from setup.py: name
-version = "0.12"               # from setup.py: version
+version = "0.3.2"               # from setup.py: version
 readme = "README.md"            # or path to your long description file
 requires-python = ">=3.8"       # from setup.py: python_requires
 license = { text = "MIT" }      # replace with your license or use file = "LICENSE"
@@ -24,7 +24,18 @@ classifiers = [
 ]
 
 # Runtime dependencies (copy install_requires from setup.py)
-dependencies = ["scanpy>=1.10.1", "pybiomart", "scikit-image"]
+dependencies = [
+    "scanpy>=1.10.1",
+    "anndata>=0.10",
+    "mygene>=3.2.2",
+    "pybiomart>=0.2.0",
+    "scikit-image>=0.22",
+    "matplotlib>=3.7",
+    "pandas>=2.0",
+    "numpy>=1.26",
+    "scipy>=1.10",
+    "pmenu_lib>=1.2.2"
+]
 
 # Project URLs (optional)
 [project.urls]

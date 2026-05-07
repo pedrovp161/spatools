@@ -1,26 +1,54 @@
 import os
 import scipy
+import mygene
 import warnings
 import itertools
 import numpy as np
 import pandas as pd
 from PIL import Image
 from skimage import io
+from pandas import Series
+import numpy.typing as npt
 from pmenu_lib import pmenu
 from anndata import AnnData
-from pybiomart import Server
 from time import perf_counter
 from .. import constants as con
 import matplotlib.pyplot as plt
 from matplotlib.path import Path
+from scipy.stats import spearmanr
 from scipy.spatial import distance
 from matplotlib.widgets import Slider
-from typing import List, Any, Optional, Union, Final
 from scipy.spatial.distance import cdist
 from multiprocessing import Pool, cpu_count
+from typing import List, Any, Optional, Union, Final, Tuple
 
 from ..reading import read
-import constants as con
+
+COLORS_23_HEX = [
+    "#00206F",  # 0
+    "#E6D647",  # 1
+    "#AA6028",  # 2
+    "#13B151",  # 3
+    "#590058",  # 4
+    "#C5DF77",  # 5
+    "#0187E2",  # 6
+    "#FFA161",  # 7
+    "#8865C3",  # 8
+    "#FC506F",  # 9
+    "#76E8C3",  # 10
+    "#7E002E",  # 11
+    "#2A5200",  # 12
+    "#FF7FCA",  # 13
+    "#813E73",  # 14
+    "#FF878F",  # 15
+    "#22DEE6",  # 16
+    "#C94E3C",  # 17
+    "#836E20",  # 18
+    "#9F9638",  # 19
+    "#B149A1",  # 20
+    "#804D11",  # 21
+    "#812F19"   # 22
+]
 
 def spatools_check(adata):
     if "spatools" in adata.uns:
@@ -182,95 +210,111 @@ def remove_random_rows(df: pd.DataFrame,
 
     return df_removed
 
-def convert_df_ens(ens: Any):
+def translate_anndata_genes(
+    adata: AnnData,
+    col: Optional[str] = None,
+    species: str = "human",
+    inplace: bool = True
+) -> AnnData:
     """
-    Given a list of Ensembl gene IDs, convert them to external gene names using the Ensembl BioMart API.
+    Convert Ensembl gene IDs to gene symbols in an AnnData object.
 
-    Parameters
-    ----------
-    ens : List
-        List of Ensembl gene IDs
-
-    Returns
-    -------
-    df : pd.DataFrame
-        A DataFrame with the Ensembl gene ID as index and the external gene name as the only column
-    """
-    if not isinstance(ens, list):
-        raise ValueError("Values must be in list format")
-
-    urls = [
-        "http://www.ensembl.org",
-        "http://useast.ensembl.org",
-        "http://asia.ensembl.org"
-    ]
-
-    for url in urls:
-        try:
-            server = Server(host=url)
-
-            dataset = (server.marts["ENSEMBL_MART_ENSEMBL"]
-                          .datasets['hsapiens_gene_ensembl'])
-
-            df = dataset.query(attributes=['ensembl_gene_id', 'external_gene_name'])
-
-            # Verificar se as colunas esperadas estão presentes
-            if 'Gene stable ID' not in df.columns or 'Gene name' not in df.columns:
-                raise KeyError(f"Expected columns not found in the dataset from {url}")
-
-            result_dict = df.set_index('Gene stable ID')['Gene name'].to_dict()
-
-            result = {i: result_dict.get(i, None) for i in ens}
-
-            df = pd.DataFrame.from_dict(result, orient="index", columns=["Gene Name"])
-
-            df = df.dropna()
-
-            return df
-
-        except KeyError as ke:
-            print(f"KeyError with URL {url}: {ke}")
-        except Exception as e:
-            print(f"Error with URL {url}: {e}")
-
-    raise RuntimeError("All Ensembl URLs failed.")
-
-def convert_anndata_ens(adata: AnnData, 
-                        clusters_col: str = "gene_symbol"):
-    """
-    Convert Ensembl gene IDs in AnnData object to external gene names.
-    
     Parameters
     ----------
     adata : AnnData
-        Anndata object containing the data.
-    clusters_col : str, optional
-        Name of the column to store the external gene names (default: "gene_symbol").
+        AnnData object containing gene information in `adata.var`.
     
+    col : Optional[str], default=None
+        Column in `adata.var` containing Ensembl IDs.
+        If None, uses `adata.var.index`.
+    
+    species : str, default="human"
+        Species used in mygene query.
+    
+    inplace : bool, default=True
+        Whether to modify the object in place.
+
     Returns
     -------
     AnnData
-        Anndata object with Ensembl gene IDs converted to external gene names.
+        Modified AnnData object with:
+        - `gene_symbol` column
+        - updated `.var.index`
+        - `gene_ids` column preserving original IDs
     """
-    gene_ids = adata.var.index.to_list()
 
-    converted = convert_df_ens(gene_ids)  # type: ignore
-    if converted is None or converted.empty:
-        raise RuntimeError("Conversion failed; no valid mappings were returned.")
-    
-    adata.var[clusters_col] = converted["Gene Name"]
-    df = adata.var
+    if not inplace:
+        adata = adata.copy()
 
-    # Convertendo a coluna para object temporariamente
-    df[clusters_col] = df[clusters_col].astype('object')
+    # -------------------------
+    # Validate inputs
+    # -------------------------
+    if col is not None and col not in adata.var.columns:
+        raise ValueError(f"Column '{col}' not found in adata.var")
 
-    # Preenchendo os valores np.nan com os valores dos índices correspondentes
-    df[clusters_col] = df[clusters_col].fillna(pd.Series(df.index, index=df.index))
+    # -------------------------
+    # Extract Ensembl IDs
+    # -------------------------
+    if col is None:
+        ensembl_ids = adata.var.index.astype(str).tolist()
+    else:
+        ensembl_ids = adata.var[col].astype(str).tolist()
 
-    # Convertendo de volta para category
-    df[clusters_col] = df[clusters_col].astype('category')
+    # -------------------------
+    # Query mygene
+    # -------------------------
+    mg = mygene.MyGeneInfo()
 
-    adata.var = df
+    try:
+        results = mg.querymany(
+            ensembl_ids,
+            scopes="ensembl.gene",
+            fields="symbol",
+            species=species
+        )
+    except Exception as e:
+        raise RuntimeError(f"MyGene query failed: {e}")
+
+    # -------------------------
+    # Build mapping
+    # -------------------------
+    id_to_symbol = {
+        r["query"]: r.get("symbol", r["query"])
+        for r in results if "query" in r
+    }
+
+    # -------------------------
+    # Map gene symbols
+    # -------------------------
+    if col is None:
+        adata.var["gene_ids"] = adata.var.index.astype(str)
+        adata.var["gene_symbol"] = adata.var.index.map(id_to_symbol)
+    else:
+        adata.var["gene_ids"]: Series[str] = adata.var[col].astype(str) # type: ignore
+        adata.var["gene_symbol"] = adata.var[col].map(id_to_symbol)
+
+    # fallback se algum não foi mapeado
+    adata.var["gene_symbol"]: Series[str] = adata.var["gene_symbol"].fillna(adata.var["gene_ids"]) # type: ignore
+
+    # -------------------------
+    # Handle duplicates (CRÍTICO)
+    # -------------------------
+    new_index = adata.var["gene_symbol"].astype(str)
+
+    duplicated = new_index.duplicated()
+    if duplicated.any():
+        new_index[duplicated] = (# type: ignore
+            new_index[duplicated] + "_" + adata.var["gene_ids"][duplicated]
+        )
+
+    # -------------------------
+    # Apply new index
+    # -------------------------
+    adata.var.index = new_index# type: ignore
+    adata.var.index.name = None
+
+    # garantir unicidade final
+    adata.var_names_make_unique()
 
     return adata
 
@@ -325,7 +369,7 @@ def merge_clusters(adata: AnnData,
         print(f"Warning: '{clusters_col}_colors' not found in 'adata.uns'. Colors not transferred.")
 
     # Convert the new cluster column to integers, then back to strings
-    adata.obs[new_clusters_col] = adata.obs[new_clusters_col].astype(int).astype(str)
+    adata.obs[new_clusters_col] = adata.obs[new_clusters_col].astype(int).astype(str)# type: ignore
 
     # Return the updated AnnData object
     return adata
@@ -574,28 +618,26 @@ def z_score(adata: AnnData,
     return adata
 
 # Função para calcular correlação de Spearman entre dois tipos celulares
-def spatial_spearman(adata: AnnData, 
+def spatial_spearman(adata: AnnData, #type: ignore
                      cell1: str, 
                      cell2: str, 
                      subset: str = "", 
                      value: str = "", 
                      saveFig: bool = False,
-                     show: bool = False):
-    if not subset or not value:
-        raise ValueError("Os parâmetros 'subset' e 'value' devem ser fornecidos.")
-    
-    adata = adata[adata.obs[subset] == value]
+                     show: bool = False) -> Tuple[float, float]:
+    if subset and value:
+        adata: AnnData = adata[adata.obs[subset] == value]
 
     # Acessar diretamente as colunas corretas
-    x = adata.obsm["q05_cell_abundance_w_sf"][f"q05cell_abundance_w_sf_{cell1}"].values.copy()
-    y = adata.obsm["q05_cell_abundance_w_sf"][f"q05cell_abundance_w_sf_{cell2}"].values.copy()
+    x = adata.obsm["q05_cell_abundance_w_sf"][f"q05cell_abundance_w_sf_{cell1}"].values.copy()#type: ignore
+    y = adata.obsm["q05_cell_abundance_w_sf"][f"q05cell_abundance_w_sf_{cell2}"].values.copy()#type: ignore
     
     # Calcular correlação
     corr, p_value = spearmanr(x, y)
     
     # Gráfico de dispersão
     plt.figure(figsize=(12, 8))
-    plt.scatter(x, y, c='blue', alpha=0.5)
+    plt.scatter(x, y, c='blue', alpha=0.5)#type: ignore
     plt.xlabel(f"Abundância de {cell1}", fontsize=18)
     plt.ylabel(f"Abundância de {cell2}", fontsize=18)
     plt.title(f"Correlação de Spearman entre {cell1} e {cell2}", fontsize=20)
@@ -612,17 +654,16 @@ def spatial_spearman(adata: AnnData,
 
     plt.close()
     
-    return corr, p_value
-
+    return (corr, p_value) # type: ignore
 # Função para matriz de correlação
 def spearman_correlation_matrix(adata: AnnData, 
                                 subset: str = "", 
-                                value: str = ""):
+                                value: str = "") -> Tuple[pd.DataFrame, pd.DataFrame]:
     if not subset or not value:
         raise ValueError("Os parâmetros 'subset' e 'value' devem ser fornecidos.")
     
     # Extrair os nomes das colunas sem cortar errado
-    names = [col.replace("q05cell_abundance_w_sf_", "") for col in adata.obsm["q05_cell_abundance_w_sf"].columns]
+    names: list[str] = [col.replace("q05cell_abundance_w_sf_", "") for col in adata.obsm["q05_cell_abundance_w_sf"].columns]#type: ignore
 
     corr_matrix = pd.DataFrame(index=names, columns=names, dtype=float)
     pval_matrix = pd.DataFrame(index=names, columns=names, dtype=float)
@@ -637,11 +678,97 @@ def spearman_correlation_matrix(adata: AnnData,
                 value=value,
                 saveFig=False
             )
-            corr_matrix.loc[name1, name2] = corr
-            pval_matrix.loc[name1, name2] = p_value
+            corr_matrix.loc[name1, name2] = float(corr)
+            pval_matrix.loc[name1, name2] = float(p_value)
     return corr_matrix, pval_matrix
 
 class SelectionTool:
+    """
+    Interactive spatial spot selection tool for Visium/spatial transcriptomics data.
+    
+    This tool provides an interactive interface to manually select spots from spatial 
+    transcriptomics images using a lasso selection. Selected spots can be stored in the 
+    AnnData object for downstream analysis.
+    
+    Parameters
+    ----------
+    dir : str
+        Path to a .h5ad file or directory containing .h5ad files. If a directory is 
+        provided, a menu will be displayed to select the file.
+    
+    Attributes
+    ----------
+    adata : AnnData
+        The AnnData object containing spatial data and gene expression.
+    sample : str
+        Name of the sample file being analyzed.
+    coords : np.ndarray
+        Spatial coordinates of spots, shape (n_spots, 2).
+    image : np.ndarray
+        High-resolution tissue image.
+    scale : float
+        Current scaling factor for displaying coordinates on the image.
+    scale_mode : str
+        Current scale mode ('hires' or 'lowres').
+    selected : np.ndarray
+        Boolean array indicating selected spots.
+    alpha : float
+        Transparency level for unselected spots (0.0 - 1.0).
+    spot : int
+        Size of spot markers on the plot.
+    color : str
+        Hex color code for unselected spots.
+    
+    Methods
+    -------
+    plot()
+        Render the current state of the plot with selected and unselected spots.
+    on_press(event)
+        Handle mouse click to start lasso selection.
+    on_move(event)
+        Handle mouse movement to draw lasso path.
+    on_release(event)
+        Handle mouse release to finalize lasso selection.
+    on_key(event)
+        Handle keyboard shortcuts.
+    on_scroll(event)
+        Handle mouse scroll to adjust spot transparency.
+    main()
+        Initialize the interactive plot interface.
+    run()
+        Execute the interactive selection tool.
+    
+    Keyboard Shortcuts
+    ------------------
+    a : Save selected spots to adata.obs["selected_area"]
+    c : Clear all selections
+    q : Quit and close the plot
+    up : Switch to high-resolution (hires) scale
+    down : Switch to low-resolution (lowres) scale
+    left : Decrease scale (zoom out)
+    right : Increase scale (zoom in)
+    d : Reset scale to default (0.998)
+    w : Write AnnData object to disk
+    z : Increase spot size
+    x : Decrease spot size
+    v : Cycle through available colors
+    scroll up : Increase spot transparency
+    scroll down : Decrease spot transparency
+    
+    Mouse Interactions
+    ------------------
+    click and drag : Draw lasso selection path
+    
+    Examples
+    --------
+    >>> import spatools as sp
+    >>> tool = sp.tl.SelectionTool("/path/to/sample.h5ad")
+    >>> adata_selected = tool.run()
+    
+    The selected spots will be added to adata.obs["selected_area"] with values 
+    "Selected" or "Not selected".
+    """
+
     def __init__(self, dir: str):
         print(os.path.basename(dir))
         self.process_dir(dir)
@@ -665,7 +792,7 @@ class SelectionTool:
 
         # update time
         self.last_update: float = 0.0
-        self.min_update_time: Final = 0.06
+        self.min_update_time: Final = 0.01
         self.a: int = 0
 
         # parameters
@@ -682,9 +809,19 @@ class SelectionTool:
                 self.adata: AnnData = result
                 self.sample: str = os.path.basename(dir)
         elif os.path.isdir(dir):
-            self.adata, self.sample = self.menu(dir)
+            adata, sample = self.menu(dir)
+            if adata is None or sample is None:
+                raise ValueError("No file selected from menu")
+            self.adata = adata
+            self.sample = sample
 
     def plot(self):
+        """
+        Render the current state of the plot with tissue image and spot markers.
+        
+        Displays the tissue image as background and overlays selected (red) and 
+        unselected (configured color) spots with their respective sizes and transparency.
+        """
         self.ax.clear()
         self.ax.imshow(self.image)
 
@@ -704,6 +841,12 @@ class SelectionTool:
         self.fig.canvas.draw_idle()
 
     def on_press(self, event):
+        """
+        Handle mouse click event to start lasso selection.
+        
+        Initializes the lasso drawing path when the mouse button is pressed within 
+        the plot axes.
+        """
         if event.inaxes != self.ax:
             return
 
@@ -719,30 +862,43 @@ class SelectionTool:
         self.line_artist, = self.ax.plot([], [], color="cyan", lw=2)
 
     def on_move(self, event):
-            # 1. Sai imediatamente se não estiver desenhando ou estiver fora do gráfico
-            if not self.is_drawing or event.inaxes != self.ax:
-                return
+        """
+        Handle mouse movement event during lasso drawing.
+        
+        Continuously updates the lasso path vertices as the mouse moves, with rate 
+        limiting to prevent excessive updates.
+        """
+        # 1. Sai imediatamente se não estiver desenhando ou estiver fora do gráfico
+        if not self.is_drawing or event.inaxes != self.ax:
+            return
 
-            # (Opcional) Contador de debug - movido para cá para contar apenas os eventos válidos
-            self.a += 1 
+        # (Opcional) Contador de debug
+        self.a += 1 
 
-            # 2. Verifica o tempo apenas se o evento for válido
-            current_time = perf_counter()
-            if current_time - self.last_update < self.min_update_time:
-                return
+        # 2. Verifica o tempo apenas se o evento for válido
+        current_time = perf_counter()
+        if current_time - self.last_update < self.min_update_time:
+            return
 
-            # 3. Atualiza os vértices e o desenho
-            self.verts.append((event.xdata, event.ydata))
+        # 3. Atualiza os vértices e o desenho
+        self.verts.append((event.xdata, event.ydata))
 
-            if len(self.verts) > 1:
-                x, y = zip(*self.verts)
+        if len(self.verts) > 1:
+            x, y = zip(*self.verts)
+            if self.line_artist:
                 self.line_artist.set_data(x, y)
                 self.line_artist.figure.canvas.draw_idle()
 
-            # 4. Atualiza o último tempo registrado
-            self.last_update = current_time
+        # 4. Atualiza o último tempo registrado
+        self.last_update = current_time
 
     def on_release(self, event):
+        """
+        Handle mouse release event to finalize lasso selection.
+        
+        Closes the lasso path and selects all spots contained within, adding them 
+        to the existing selection using OR logic.
+        """
         if not self.is_drawing:
             return
 
@@ -779,6 +935,13 @@ class SelectionTool:
         self.plot()
 
     def on_key(self, event):
+        """
+        Handle keyboard events for tool control.
+        
+        Supports multiple keyboard shortcuts for selection management, scale adjustment,
+        visualization parameters, and file operations. See class docstring for full 
+        list of available shortcuts.
+        """
         if event.key == "a":
             self.adata.obs["selected_area"] = self.selected
             print(f"Sucesso! {np.sum(self.selected)} spots selecionados.")
@@ -829,12 +992,20 @@ class SelectionTool:
             self.spot -= 1
             self.plot()
 
-        elif event.key == "p":
-            self.color = [i for i in con.COLORS_23_HEX][b]
+        elif event.key == "v":
+            self.color = [i for i in COLORS_23_HEX][self.b]
             self.b += 1
+            if self.b == len(COLORS_23_HEX):
+                self.b = 0
+            self.plot()
 
     def on_scroll(self, event):
-
+        """
+        Handle mouse scroll event to adjust spot transparency.
+        
+        Increases transparency (alpha) on scroll up and decreases on scroll down,
+        with bounds checking to keep alpha between 0.1 and 0.9.
+        """
         if 0.9 > self.alpha:
             if event.button == 'up':
                 self.alpha += 0.1
@@ -845,7 +1016,7 @@ class SelectionTool:
 
         self.plot()
 
-    def menu(self, directory):
+    def menu(self, directory) -> Tuple[Optional[AnnData], Optional[str]]:
         run: bool = True
         while run:
             try:
@@ -853,13 +1024,13 @@ class SelectionTool:
                 options = os.listdir(directory)
             except PermissionError:
                 print(f"without permission to access {directory}")
-                return
+                return None, None
 
             sample: Optional[str] = pmenu(options)
 
             if not sample:
                 print("Nenhuma opção selecionada. Saindo.")
-                return
+                return None, None
 
             path = os.path.join(directory, sample)
 
@@ -877,6 +1048,12 @@ class SelectionTool:
                 print("Select a file and not a directory")
 
     def main(self):
+        """
+        Initialize and setup the interactive matplotlib interface.
+        
+        Creates the figure and axes, renders the initial plot, and connects all 
+        event handlers for mouse and keyboard interactions.
+        """
         self.fig, self.ax = plt.subplots(figsize=(8, 8))
         self.plot()
         # Event functions
@@ -887,203 +1064,54 @@ class SelectionTool:
         plt.show()
 
     def run(self) -> AnnData:
+        """
+        Execute the interactive selection tool.
+        
+        Launches the interactive interface and returns the AnnData object with 
+        selected spots stored in obs["selected_area"].
+        
+        Returns
+        -------
+        AnnData
+            The modified AnnData object containing selection results.
+            Keyboard Shortcuts
+
+        ------------------
+        a : Save selected spots to adata.obs["selected_area"]
+        c : Clear all selections
+        q : Quit and close the plot
+        up : Switch to high-resolution (hires) scale
+        down : Switch to low-resolution (lowres) scale
+        left : Decrease scale (zoom out)
+        right : Increase scale (zoom in)
+        d : Reset scale to default (0.998)
+        w : Write AnnData object to disk
+        z : Increase spot size
+        x : Decrease spot size
+        v : Cycle through available colors
+        scroll up : Increase spot transparency
+        scroll down : Decrease spot transparency
+        
+        Mouse Interactions
+        ------------------
+        click and drag : Draw lasso selection path
+        
+        Examples
+        --------
+        >>> import spatools as sp
+        >>> tool = sp.tl.SelectionTool("/path/to/sample.h5ad")
+        >>> adata_selected = tool.run()
+        
+        The selected spots will be added to adata.obs["selected_area"] with values 
+        "Selected" or "Not selected".
+        """
         self.main()
         return self.adata
 
-# deprecated
-def calculate_distances(args):
-    """
-    Calculate the distances between each pair of points within a given threshold.
-
-    Parameters
-    ----------
-    args : tuple
-        A tuple containing the following elements:
-            - centers_colors : array-like
-                A 2D array with shape (n_points, 3) containing the coordinates (x, y) and color of each point.
-            - idx : int
-                The index of the point for which to calculate the distances.
-            - threshold_distance : float
-                The maximum distance between two points to consider them close.
-
-    Returns
-    -------
-    data : list
-        A list of lists, where each sublist contains the coordinates (x, y) of the center point, its color, the coordinates (x, y) of a neighboring point, and the distance between the two points.
-    """
-    centers_colors, idx, threshold_distance = args
-    x, y, color_center = centers_colors[idx]
-    data = []
-    for j, (x2, y2, _) in enumerate(centers_colors):
-        if idx != j:
-            dist = distance.euclidean((x, y), (x2, y2))
-            if dist < threshold_distance:
-                data.append([x, y, color_center, x2, y2, dist])
-    return data
-
-def process_image(input_image_path, 
-                  output_dir: str, 
-                  minDist=50, 
-                  param1=50, 
-                  param2=0.2, 
-                  minRadius=50, 
-                  maxRadius=100):
-    import cv2 as cv
-    warnings.simplefilter("always", DeprecationWarning)
-    """
-    Process an input image to detect circles using Hough Transform.
-
-    Parameters
-    ----------
-    input_image_path : str
-        The path to the input image file.
-    output_dir : str
-        The directory to save the output files.
-    minDist : int, default=50
-        Minimum distance between detected circles.
-    param1 : int, default=50
-        First method-specific parameter for the Hough Transform (higher threshold).
-    param2 : float, default=0.2
-        Second method-specific parameter for the Hough Transform (accumulator threshold).
-    minRadius : int, default=50
-        Minimum circle radius to be detected.
-    maxRadius : int, default=100
-        Maximum circle radius to be detected.
-
-    Returns
-    -------
-    output_image: png
-        Image containing the detected circles outlined by lines generated with Matplotlib.
-    output_excel : XLSX
-        Path to the Excel file in XLSX format containing a dataframe with the following columns:
-        - Center_X: X-coordinate of the center point.
-        - Center_Y: Y-coordinate of the center point.
-        - Center_Color: Color value of the center point.
-        - Neighbor_X: X-coordinate of the neighboring point.
-        - Neighbor_Y: Y-coordinate of the neighboring point.
-        - Distance: Distance between the center point and the neighboring point.
-        - Point_Name: Name of the point in the format "Point_X_Y".
-        - Color_Code: Mapped color code from the dictionary.
-        - Proximity: Categorization of the distance as 'close' or 'far'.
-        - Neighbor_Cluster: Cluster of the neighboring point.
-        - Combination: Tuple of sorted color codes of center and neighbor points.
-    """
-    # Aumentar o limite de pixels
-    Image.MAX_IMAGE_PIXELS = None
-
-    # Carregar a imagem
-    image = io.imread(input_image_path)
-
-    # Converter RGBA para RGB (ignorando o canal alfa)
-    if image.shape[2] == 4:
-        image_rgb = image[:, :, :3]
-    else:
-        image_rgb = image
-
-    # Converter a imagem RGB para escala de cinza
-    gray_image = cv.cvtColor(image_rgb, cv.COLOR_BGR2GRAY)
-
-    # Detectar círculos usando a Transformada de Hough
-    circles = cv.HoughCircles(
-        gray_image,
-        cv.HOUGH_GRADIENT_ALT,
-        dp=1,
-        minDist=minDist,
-        param1=param1,
-        param2=param2,
-        minRadius=minRadius,
-        maxRadius=maxRadius 
-    )
-
-    if circles is not None:
-        circles = np.uint16(np.around(circles[0, :])).astype("int")
-
-        # Obter a cor do centro de cada círculo e seus raios
-        centers_colors = [(x, y, image_rgb[y, x]) for x, y, _ in circles]
-        radii = circles[:, 2]
-
-        # Calcular a média dos raios e definir a distância limite baseada no círculo e seus 6 vizinhos mais próximos
-        mean_radii_with_neighbors = []
-        for i, (x, y, r) in enumerate(circles):
-            # Calcular a distância para todos os outros círculos
-            distances = np.array([distance.euclidean((x, y), (x2, y2)) for (x2, y2, _) in circles if (x2, y2) != (x, y)])
-            # Obter os índices dos 6 círculos mais próximos
-            nearest_indices = np.argsort(distances)[:6]
-            # Calcular a média dos raios desses 6 círculos mais o círculo atual
-            mean_radius = np.mean(np.append(radii[nearest_indices], r))
-            mean_radii_with_neighbors.append(mean_radius)
-
-        # Definir a distância limite baseada na média dos raios com os vizinhos
-        threshold_distance = 2 * np.mean(mean_radii_with_neighbors) * np.sqrt(3) * 0.9
-
-        # Preparar argumentos para paralelização
-        args = [(centers_colors, i, threshold_distance) for i in range(len(centers_colors))]
-
-        # Usar Pool para paralelizar o cálculo das distâncias
-        with Pool(cpu_count()) as pool:
-            results = pool.map(calculate_distances, args)
-
-        # Combinar os resultados
-        data = [item for sublist in results for item in sublist]
-
-        df = pd.DataFrame(data, columns=['Center_X', 'Center_Y', 'Center_Color', 'Neighbor_X', 'Neighbor_Y', 'Distance'])
-
-        # Adicionar a coluna 'Point_Name'
-        df['Point_Name'] = df.apply(lambda row: f"Point_{row['Center_X']}_{row['Center_Y']}", axis=1)
-
-        # Função para mapear a cor do centro para o dicionário
-        def map_color_to_dict(color):
-            for key, value in con.COLORS_23.items():
-                if tuple(color) == value:
-                    return key
-            return None
-
-        # Adicionar a coluna 'Color_Code'
-        df['Color_Code'] = df['Center_Color'].apply(map_color_to_dict)
-
-        # Adicionar a coluna 'proximity'
-        df['proximity'] = df['Distance'].apply(lambda d: 'close' if d < threshold_distance else 'far')
-
-        # Criar um dicionário para mapear as coordenadas dos vizinhos para seus clusters
-        neighbor_clusters = {f"{x}_{y}": map_color_to_dict(color) for x, y, color in centers_colors}
-
-        # Adicionar a coluna 'Neighbor_Cluster'
-        df['Neighbor_Cluster'] = df.apply(lambda row: neighbor_clusters.get(f"{row['Neighbor_X']}_{row['Neighbor_Y']}"), axis=1)#type:ignore
-
-        # Adicionar a coluna 'combination'
-        df['combination'] = df.apply(lambda row: tuple(sorted((row['Color_Code'], row['Neighbor_Cluster']))), axis=1)
-
-        # Salvar o dataframe em Excel
-        output_excel_path = os.path.join(output_dir, "output_data.xlsx")
-        df.to_excel(output_excel_path, index=False)
-
-        # Plotar a imagem e os círculos detectados
-        fig, ax = plt.subplots(figsize=(10, 10))
-        ax.imshow(image_rgb)
-
-        # Desenhar os círculos
-        for (x, y, r) in circles:
-            circle = plt.Circle((x, y), r, color='black', fill=False, linewidth=0.2)#type:ignore
-            ax.add_patch(circle)
-
-        ax.set_title('Círculos Detectados')
-        plt.axis('off')
-
-        # Salvar a imagem
-        output_image_path = os.path.join(output_dir, "detected_circles.png")
-        plt.savefig(output_image_path, format="png", dpi=1000)
-        plt.close()
-
-        return output_image_path, output_excel_path
-    else:
-        print("Nenhum círculo foi detectado.")
-        return None, None
-
 
 if __name__ == "__main__":
-    from spatools.tools.tl import SelectionTool
 
-    tool: SelectionTool = SelectionTool("/mnt/SATA/spatialPaper/data/corrected")
+    tool: SelectionTool = SelectionTool("/mnt/SATA/spatialCourse/data")
     adata = tool.run()
 
     if "selected_area" in adata.obs.columns:

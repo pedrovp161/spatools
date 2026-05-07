@@ -5,7 +5,10 @@ import warnings
 import os
 
 # outlier detection
-def is_outlier(x, k=4, method='both') -> np.ndarray:
+def is_outlier(x, 
+               k: float = 4, 
+               method = 'both'
+               ) -> np.ndarray:
     """
     Identify outliers in an array of values using Median Absolute Deviation (MAD).
 

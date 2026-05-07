@@ -1,20 +1,32 @@
 import os
+import warnings
 import numpy as np
 import scanpy as sc
 import pandas as pd
 import seaborn as sns
+import matplotlib as mpl
+import matplotlib.colors
 from copy import deepcopy
+import matplotlib.cm as cm
 from anndata import AnnData
-import matplotlib.pyplot as plt
-from collections import namedtuple
 from scipy.stats import norm
+import matplotlib.pyplot as plt
+from typing import Union, Optional
+from collections import namedtuple
+from matplotlib.patches import Patch
 import matplotlib.patches as _mpatches
+from matplotlib.ticker import MultipleLocator
 from matplotlib.lines import Line2D as _Line2D
 from statsmodels.stats.multitest import multipletests
 from matplotlib.colors import LinearSegmentedColormap
-from typing import Union
 
-def plot_bar(
+DEFAULT_COLORS = [
+    "#cd3f35", "#62b74f", "#9e5ecf", "#c54eae", "#538342",
+    "#676bc6", "#db9448", "#40bbce", "#1d19e6", "#e7b4e9",
+    "#4ebba0", "#ca6f87", "#615963"
+]
+
+def bar(
         adata: AnnData, 
         clusters_col: str, 
         group_by: str, 
@@ -22,286 +34,499 @@ def plot_bar(
         title: str = '', 
         xlabel: str = '', 
         ylabel: str = 'Percentage (%)',
-        use_percentage: bool = True,  # Novo argumento
+        use_percentage: bool = True,
         angle: int  = 90,
-        legend: str = 'Clusters'
+        legend: str = 'Clusters',
+        custom_colors: Union[dict, None] = None
     ) -> None:
+    
     """
-    Function to plot stacked bar charts with grouping.
+    Plot a stacked bar chart showing the distribution of categories across groups.
+
+    This function groups observations from an AnnData object by two categorical 
+    variables and visualizes their distribution as a stacked bar plot. It supports 
+    both percentage-based and absolute counts, and allows custom color mappings.
 
     Parameters
     ----------
     adata : AnnData
-        AnnData object.
+        Annotated data matrix containing observations in `adata.obs`.
+
     clusters_col : str
-        Name of the column with clusters in adata.obs.
+        Column name in `adata.obs` representing the categories to be stacked 
+        (e.g., clusters, samples, cell types).
+
     group_by : str
-        Name of the column to group by (e.g., 'batch' or 'response').
+        Column name in `adata.obs` used to define the groups on the x-axis 
+        (e.g., study, batch, condition).
+
     group_order : list, optional
-        Custom order of groups for plotting (default: None).
+        Custom order for the groups on the x-axis. If provided, the plot will 
+        follow this order. Missing groups will appear as NaN.
+
     title : str, optional
-        Title of the chart (default: '').
+        Title of the plot.
+
     xlabel : str, optional
-        Label for the X-axis (default: '').
+        Label for the x-axis.
+
     ylabel : str, optional
-        Label for the Y-axis (default: 'Porcentagem (%)').
+        Label for the y-axis. Defaults to 'Percentage (%)'.
+
     use_percentage : bool, optional
-        If True, plot percentages; otherwise, plot absolute values (default: True).
+        If True, values are normalized to percentages within each group.
+        If False, absolute counts are displayed.
+
+    angle : int, optional
+        Rotation angle for x-axis tick labels.
+
+    legend : str, optional
+        Title of the legend.
+
+    custom_colors : dict, optional
+        Dictionary mapping category names (from `clusters_col`) to colors.
+        Example:
+            {'Sample1': '#1f77b4', 'Sample2': '#ff7f0e'}
+
+        If None, the function will attempt to use colors stored in:
+            `adata.uns[f"{clusters_col}_colors"]`
+
+        Notes:
+        - The order of colors will automatically match the plotted categories.
+        - This parameter is recommended when working with non-numeric categories
+          (e.g., sample names, patient IDs).
 
     Returns
     -------
     None
-        The function displays the plot.
+        Displays the stacked bar plot.
+
+    Raises
+    ------
+    ValueError
+        If `clusters_col` or `group_by` are not found in `adata.obs`.
+
+    ValueError
+        If `custom_colors` is None and no color information is found in
+        `adata.uns`.
+
+    Examples
+    --------
+    Basic usage with percentages:
+
+    >>> bar(adata, clusters_col="leiden", group_by="batch")
+
+    Using absolute counts:
+
+    >>> bar(adata, clusters_col="leiden", group_by="batch", use_percentage=False)
+
+    Using custom colors (e.g., for samples):
+
+    >>> colors = dict(zip(adata.obs["sample"].unique(), st.con.BATCH_COLORS))
+    >>> bar(
+    ...     adata,
+    ...     clusters_col="sample",
+    ...     group_by="study",
+    ...     custom_colors=colors,
+    ...     use_percentage=False
+    ... )
+
+    Notes
+    -----
+    - This function is a generalization of Scanpy-style stacked bar plots.
+    - It ensures consistent color mapping even when category order changes.
+    - Particularly useful for publication-quality figures involving multiple
+      categorical annotations.
     """
+
+    import matplotlib.pyplot as plt
 
     if clusters_col not in adata.obs.columns:
         raise ValueError(f"A coluna '{clusters_col}' não está em adata.obs")
-    
-    color_key = f"{clusters_col}_colors"
-    if color_key not in adata.uns:
-        raise ValueError(f"As cores para '{clusters_col}' não estão definidas em adata.uns['{color_key}']")
 
-    cluster_colors = adata.uns[color_key]
-
-    # verify if group_by is in adata.obs
     if group_by not in adata.obs.columns:
         raise ValueError(f"A coluna '{group_by}' não está em adata.obs")
 
-    # group data by group_by e clusters_col
-    count_data = adata.obs.groupby([group_by, clusters_col]).size().unstack(fill_value=0)
+    count_data = adata.obs.groupby([group_by, clusters_col]).size().unstack(fill_value=0)# type: ignore
 
-    # reorder groups in a specific order
     if group_order:
         count_data = count_data.reindex(group_order)
 
-    # decide between percentage and absolute values
     if use_percentage:
-        data_to_plot = count_data.div(count_data.sum(axis=1), axis=0) * 100  # type: ignore
+        data_to_plot = count_data.div(count_data.sum(axis=1), axis=0) * 100
     else:
         data_to_plot = count_data
 
-    # use colors defined in adata.uns
     cluster_labels = data_to_plot.columns
-    colors = [cluster_colors[int(label)] for label in cluster_labels]
+    n_clusters = len(cluster_labels)
 
-    # plot stacked bar
-    ax = data_to_plot.plot(kind='bar', stacked=True, figsize=(12, 6), color=colors)
+    if custom_colors is not None:
+        # dict: {label: color}
+        if isinstance(custom_colors, dict):
+            colors = [custom_colors[label] for label in cluster_labels]
+        
+        # lista: assume ordem dos clusters
+        elif isinstance(custom_colors, (list, tuple)):
+            if len(custom_colors) < n_clusters:
+                raise ValueError("Número de cores menor que número de clusters")
+            colors = list(custom_colors[:n_clusters])
+        
+        else:
+            raise TypeError("custom_colors deve ser lista ou dict")
+
+    else:
+        color_key = f"{clusters_col}_colors"
+
+        if color_key in adata.uns:
+            cluster_colors = adata.uns[color_key]
+
+            # funciona mesmo se label for string
+            try:
+                colors = [cluster_colors[int(label)] for label in cluster_labels]
+            except:
+                # fallback seguro (ordem)
+                colors = cluster_colors[:n_clusters]
+
+        else:
+            # 🎯 fallback automático
+            cmap = cm.get_cmap("tab20", n_clusters)
+            colors = [cmap(i) for i in range(n_clusters)]
+
+    ax = data_to_plot.plot(
+        kind='bar',
+        stacked=True,
+        figsize=(12, 6),
+        color=colors
+    )
+
     ax.set_title(title, fontsize=25)
     ax.set_xlabel(xlabel, fontsize=23)
     ax.set_ylabel(ylabel, fontsize=23)
     ax.set_xticklabels(ax.get_xticklabels(), fontsize=14, rotation=angle)
-    ax.legend(title=legend, ncol=2, loc="right", bbox_to_anchor=(1.17, 0.5))
+
+    ax.legend(
+        title=legend,
+        ncol=2,
+        loc="upper left",
+        bbox_to_anchor=(1.05, 1)
+    )
+
     plt.tight_layout()
     plt.show()
 
-def plot_clusters_quality_violin_boxplot(
-        adata: AnnData, 
-        clusters_col: str = "", 
-        value_col: str = "", 
-        figsize: tuple = (12, 8)):
-    """
-    Plots violin and box plots for the percentage of mitochondrial genes by cluster.
-
-    Parameters
-    ----------
-    adata : AnnData
-        AnnData object containing the data.
-    cluster_col : str, optional
-        Name of the column containing the clusters (example: "leiden_0.5").
-    value_col : str, optional
-        Name of the column containing the values to be used (example: "pct_counts_mt").
-    figsize : tuple, optional
-        Size of the figure (default: (12, 8)).
-
-    Returns
-    -------
-    None
-        The function displays the plot.
-    """
+def clusters_quality_violin_boxplot(
+    adata: AnnData,
+    clusters_col: str = "",
+    value_col=None,
+    titles=None, 
+    figsize: tuple = (12, 8),
+    show: bool = True
+) -> None:
 
     if not clusters_col:
         print("clusters_col is not defined")
         return
-    if not value_col:
+
+    if value_col is None:
         print("value_col is not defined")
         return
 
-    # Extrair as colunas relevantes para análise
-    df = adata.obs[[clusters_col, value_col]]
+    # 🔹 Garante lista
+    if isinstance(value_col, str):
+        value_col = [value_col]
 
-    # Obter a lista de clusters únicos e ordená-los
-    clusters = sorted(df[clusters_col].unique().astype(int).tolist())
+    n_plots = len(value_col)
 
-    # Obter as cores associadas a cada cluster
+    # 🔹 Subplots
+    fig, axes = plt.subplots(1, n_plots, figsize=(figsize[0] * n_plots, figsize[1]))
+
+    if n_plots == 1:
+        axes = [axes]
+
     colors = adata.uns[f"{clusters_col}_colors"]
 
-    # Criar a figura
-    fig, ax = plt.subplots(figsize=figsize)
+    for ax, val in zip(axes, value_col):
 
-    # Configurações dos gráficos
-    violin_width = 0.8
-    boxplot_width = violin_width * 0.3
+        df = adata.obs[[clusters_col, val]].copy()
+        df[val] = pd.to_numeric(pd.Series(df[val]), errors="coerce")
 
-    # Adicionar gráficos de violino e boxplot para cada cluster
-    for i, cluster in enumerate(clusters):
-        cluster_str = str(cluster)
-        cluster_data = df[df[clusters_col] == cluster_str][value_col]
+        clusters = sorted(df[clusters_col].astype(int).unique().tolist())
 
-        # Gráfico de violino
-        parts = ax.violinplot(cluster_data, positions=[i], widths=violin_width, showmeans=False, 
-                              showmedians=False, showextrema=False)
-        for pc in parts['bodies']:#type: ignore
-            pc.set_facecolor(colors[i])  # Cor do violino
-            pc.set_edgecolor('black')
-            pc.set_alpha(1)
+        violin_width = 0.8
+        boxplot_width = violin_width * 0.3
 
-        # Gráfico de boxplot
-        ax.boxplot(cluster_data, positions=[i], widths=boxplot_width, patch_artist=True,
-                   boxprops=dict(facecolor='white', color='black'),
-                   medianprops=dict(color='black'),
-                   whiskerprops=dict(color='black'),
-                   capprops=dict(color='black'),
-                   flierprops=dict(markeredgecolor='black', markersize=3))
+        for i, cluster in enumerate(clusters):
+            cluster_str = str(cluster)
+            cluster_data = df[df[clusters_col] == cluster_str][val].dropna() # type: ignore
 
-    # Adicionar título e rótulos
-    if value_col == "pct_counts_mt":
-        ax.set_title('Porcentagem de genes mitocondriais por cluster')
-        ax.set_ylabel('Porcentagem de genes mitocondriais (%)')
+            parts = ax.violinplot(
+                [cluster_data],
+                positions=[i],
+                widths=violin_width,
+                showmeans=False,
+                showmedians=False,
+                showextrema=False
+            )
 
-    elif value_col == "total_counts":
-        ax.set_title('Número de reads por cluster')
-        ax.set_ylabel('Número de reads')
+            for pc in parts['bodies']:  # type: ignore
+                pc.set_facecolor(colors[i])
+                pc.set_edgecolor('black')
+                pc.set_alpha(1)
 
-    elif value_col == "n_genes_by_counts":
-        ax.set_title('Número de genes por cluster')
-        ax.set_ylabel('Número de genes')
+            ax.boxplot(
+                cluster_data,
+                positions=[i],
+                widths=boxplot_width,
+                patch_artist=True,
+                boxprops=dict(facecolor='white', color='black'),
+                medianprops=dict(color='black'),
+                whiskerprops=dict(color='black'),
+                capprops=dict(color='black'),
+                flierprops=dict(markeredgecolor='black', markersize=3)
+            )
 
-    ax.set_xlabel('Clusters')
+        # 🔥 TÍTULO CUSTOMIZADO
+        if titles is not None:
+            if isinstance(titles, list):
+                title = titles[value_col.index(val)]
+            elif isinstance(titles, dict):
+                title = titles.get(val, val)
+            else:
+                title = val
+        else:
+            # fallback automático
+            if val == "pct_counts_mt":
+                title = "Percentual of mitochondrial genes by spot"
+            elif val == "total_counts":
+                title = "Number of reads by spot"
+            elif val == "n_genes_by_counts":
+                title = "Number of genes by spot"
+            elif val == "log1p_n_genes_by_counts":
+                title = "log1p of the number of genes by spot"
+            elif val == "log1p_total_counts":
+                title = "log1p of the number of reads by spot"
+            else:
+                title = val
+        global_mean = df[val].mean()
 
-    # Aplicar tamanhos de fonte após os rótulos serem definidos
-    ax.title.set_fontsize(25)
-    ax.xaxis.label.set_fontsize(20)
-    ax.yaxis.label.set_fontsize(20)
+        ax.axhline(
+            global_mean,
+            color='red',
+            linestyle='--',
+            linewidth=2,
+            label='Global mean'
+        )
 
-    # Configurar ticks do eixo x
-    ax.set_xticks(range(len(clusters)))
-    ax.set_xticklabels(clusters, rotation=30, fontsize=18)
+        ax.set_title(title)
+        ax.set_ylabel(" ".join(title.split(" ")[:-2]))
+        ax.set_xlabel('Clusters')
 
-    # Configurar ticks do eixo y com tamanho de fonte personalizado
-    ax.set_yticklabels(ax.get_yticks(), fontsize=18)
+        # Estética
+        ax.title.set_fontsize(20)
+        ax.xaxis.label.set_fontsize(16)
+        ax.yaxis.label.set_fontsize(16)
 
-    # Ajustar layout e exibir o gráfico
-    fig.tight_layout()
-    plt.show()
+        ax.set_xticks(range(len(clusters)))
+        ax.set_xticklabels(clusters, rotation=30, fontsize=14)
+        ax.tick_params(axis='y', labelsize=14)
 
-def plot_spatial_clusters(
-        adata: AnnData,
-        clusters_col: str = "",
-        cols: int = 4,
-        scale_factor: int = 3000,
-        output_file: bool | str = False,
-        dpi: int = 200,
-        size: float = 1.5,
-        include_titles: bool = True):
+    if show:
+        fig.tight_layout()
+        plt.show()
 
+def spatial_plot(
+    adata: AnnData,
+    group: Optional[str] = None,
+    highlight: Union[str, int, list, None] = None,
+    sample_key: str = "sample",
+    scatter_plot: bool = True,
+    ncols: int = 7,
+    spot_size: int = 5,
+    title_fontsize: int = 18,
+    custom_colors: Union[dict, list, None] = None,
+    show: bool = True,
+    dpi: int = 150
+) -> None:
     """
-    Plots spatial images for each sample into subplots.
+    Plot spatial data for each sample or batch using AnnData spatial coordinates and images.
 
     Parameters
     ----------
     adata : AnnData
-        AnnData object containing the data.
-    clusters_col : str
-        Name of the column containing the clusters (example: "leiden_0.5").
-    cols : int
-        Number of columns for the subplot grid.
-    scale_factor : int
-        Scale factor for spatial plotting.
-    output_file : bool or str
-        Path to save the figure. If False, the figure is not saved.
-    dpi : int
-        Figure resolution.
-    size : float
-        Size of spatial spots.
-    include_titles : bool
-        Whether to show sample titles.
+        Annotated data object containing spatial coordinates in `.obsm["spatial"]`,
+        metadata in `.obs`, and image data in `.uns["spatial"]`.
+    group : Optional[str]
+        Observation key in `adata.obs` for categorical coloring, or gene name in
+        `adata.var_names` for expression-based coloring. If `None`, only the tissue
+        image is shown.
+    highlight : Union[str, int, list, None], optional
+        Value or list of values to highlight when plotting categorical groups. Highlighted
+        categories are shown with dedicated colors and other categories are shown in gray.
+    sample_key : str, optional
+        Column in `adata.obs` that identifies each sample or batch. Default is `"sample"`.
+    scatter_plot : bool, optional
+        If `True`, overlay spot points on the tissue image. If `False`, show the tissue
+        image with spatial axes scaled in millimeters.
+    ncols : int, optional
+        Maximum number of columns in the subplot grid.
+    spot_size : int, optional
+        Size of the scatter points.
+    title_fontsize : int, optional
+        Font size for each subplot title.
+    custom_colors : Union[dict, list, None], optional
+        Custom color mapping for categorical groups. If a dict, keys are category labels
+        and values are colors. If a list, it must match the number of categories.
+    show : bool, optional
+        If `True`, call `plt.show()` after plotting.
+    dpi : int, optional
+        Figure resolution in dots per inch.
 
-    Returns
-    -------
-    None
+    Example:
+    >>> group = "leiden_0_5"
+    >>> clusters = list(adata.obs[group].cat.categories)
+    >>> adata.uns[f"{group}_colors"] = NICHES_COLORS
+    >>> spatial_plot(adata=adata, group=group, sample_key="library_id", spot_size=5)
+    >>> # Highlight specific niche
+    >>> spatial_plot(adata=adata, group=group, highlight="Niche1", sample_key="library_id")
+    >>> # Gene expression visualization
+    >>> spatial_plot(adata=adata, group="ENSG00000000003", sample_key="library_id")
     """
+    
+    batches = adata.obs[sample_key].unique()
+    n = len(batches)
+    ncols = min(ncols, n)
+    nrows = int(np.ceil(n / ncols))
 
-    if not clusters_col:
-        raise ValueError("clusters_col must be provided")
+    fig, axes = plt.subplots(
+        nrows, ncols,
+        figsize=(ncols * 4, nrows * 4),
+        dpi=dpi,
+        constrained_layout=True if scatter_plot else False
+    )
+    axes = np.atleast_1d(axes).flatten()
 
-    keynames = adata.obs["batch"].unique()
+    # --- 1. Verificação de Modo ---
+    do_scatter = bool(scatter_plot and group)
+    is_obs = do_scatter and group in adata.obs
+    is_gene = do_scatter and group in adata.var_names
 
-    # ---- cluster colors ----
-    try:
-        clusters = adata.obs[clusters_col].cat.categories
-        colors = adata.uns[f"{clusters_col}_colors"]
-        clusters_colors = dict(zip(clusters, colors))
-    except KeyError:
-        clusters_colors = {}
+    # contínuo vs categórico
+    is_continuous = False
+    if is_obs:
+        import pandas as pd
+        if pd.api.types.is_numeric_dtype(adata.obs[group]):
+            is_continuous = True
+    elif is_gene:
+        is_continuous = True
 
-    # ---- subplot grid ----
-    num_samples = len(keynames)
-    rows = int(np.ceil(num_samples / cols))
-
-    fig, axs = plt.subplots(rows, cols, figsize=(6 * cols, 5 * rows))
-
-    if isinstance(axs, np.ndarray):
-        axs = axs.flatten()
-    else:
-        axs = [axs]
-
-    # ---- plot each sample ----
-    for i, library in enumerate(keynames):
-
-        ad = adata[adata.obs["batch"] == library].copy()
-
-        try:
-            palette = [
-                clusters_colors[c]
-                for c in ad.obs[clusters_col].cat.categories
-                if c in clusters_colors
-            ]
-
-            if len(palette) == 0:
-                raise ValueError
-
-        except Exception:
-            palette = "tab20"
-
-        sc.pl.spatial(
-            ad,
-            img_key="hires",
-            library_id=library,
-            color=clusters_col,
-            size=size,
-            legend_loc=None,
-            show=False,
-            scale_factor=scale_factor,
-            frameon=False,
-            palette=palette,
-            ax=axs[i]
+    if do_scatter and not is_obs and not is_gene:
+        raise ValueError(
+            f"'{group}' não encontrado em obs ou var_names. "
+            "Para plotar apenas o tecido, use scatter_plot=False."
         )
+    # --- 2. Lógica de Cores (Categorias) ---
+    color_map = {}
+    clusters = None
 
-        if include_titles:
-            axs[i].set_title(library, fontsize=18)
+    if is_obs and not is_continuous:
+        if not hasattr(adata.obs[group], "cat"):
+            adata.obs[group] = adata.obs[group].astype("category")  # type: ignore
 
-    # ---- remove empty axes ----
-    for j in range(i + 1, len(axs)):
-        fig.delaxes(axs[j])
+        clusters = adata.obs[group].cat.categories
+        base_colors = adata.uns.get(f"{group}_colors", plt.cm.tab20.colors)  # type: ignore
 
-    plt.tight_layout()
+        if len(base_colors) < len(clusters):
+            base_colors = plt.cm.get_cmap('turbo')(np.linspace(0, 1, len(clusters)))
 
-    # ---- save figure ----
-    if output_file:
-        os.makedirs(os.path.dirname(output_file), exist_ok=True)
-        plt.savefig(output_file, dpi=dpi, bbox_inches="tight")
+        color_map = {str(cl): base_colors[i] for i, cl in enumerate(clusters)}
 
-    plt.show()
+        if custom_colors:
+            if isinstance(custom_colors, dict):
+                for k, v in custom_colors.items():
+                    color_map[str(k)] = v
+            elif isinstance(custom_colors, list) and len(custom_colors) == len(clusters):
+                color_map = {str(cl): custom_colors[i] for i, cl in enumerate(clusters)}
+
+        if highlight is not None:
+            hi_cols = ["red", "yellow", "blue"]
+            hi_list = [str(highlight)] if not isinstance(highlight, list) else [str(x) for x in highlight]
+            color_map = {
+                str(cl): (
+                    hi_cols[hi_list.index(str(cl))]
+                    if str(cl) in hi_list else "#D3D3D3"
+                )
+                for cl in clusters
+            }
+
+    # --- 3. Lógica de Escala (Contínuo: gene OU obs numérico) ---
+    vmin, vmax = None, None
+
+    if is_continuous:
+        if is_gene:
+            expr_global = adata[:, group].X
+        else:
+            expr_global = adata.obs[group].values
+
+        if hasattr(expr_global, "toarray"):
+            expr_global = expr_global.toarray()  # type: ignore
+
+        expr_global = np.array(expr_global).flatten()
+        vmin, vmax = float(np.min(expr_global)), float(np.max(expr_global))
+
+    # --- 4. Loop de Plotagem ---
+    for idx, batch in enumerate(batches):
+        b = adata[adata.obs[sample_key] == batch]
+        ax = axes[idx]
+        
+        spatial_data = b.uns["spatial"][batch]
+        res_key = "hires" if "hires" in spatial_data["images"] else "lowres"
+        img = spatial_data["images"][res_key]
+        scale = spatial_data["scalefactors"][f"tissue_{res_key}_scalef"]
+        
+        # Ajuste de escala para o modo métrico
+        if not scatter_plot:
+            # No modo 6.5mm, a escala é relativa ao tamanho da imagem (proporcional)
+            # coordenadas_mm = (coords_originais * scale_do_tecido) / tamanho_em_pixels * 6.5
+            h, w = img.shape[:2]
+            coords_display = (b.obsm["spatial"] * scale) / w * 6.5
+            ax.imshow(img, extent=[0, 6.5, 6.5, 0], aspect="auto")
+            
+            ax.xaxis.set_major_locator(MultipleLocator(2))
+            ax.xaxis.set_minor_locator(MultipleLocator(1))
+            ax.yaxis.set_major_locator(MultipleLocator(2))
+            ax.yaxis.set_minor_locator(MultipleLocator(1))
+            ax.set_xlabel("mm")
+            ax.set_ylabel("mm")
+        else:
+            coords_display = b.obsm["spatial"] * scale
+            ax.imshow(img)
+            ax.axis("off")
+
+        # Plotar pontos apenas se solicitado
+        if do_scatter:
+            if is_obs:
+                c = [color_map[str(v)] for v in b.obs[group]]
+                cmap = None
+            else:
+                expr = b[:, group].X
+                c = expr.toarray().flatten() if hasattr(expr, "toarray") else expr.flatten()# type: ignore
+                cmap = "plasma"
+            
+            ax.scatter(coords_display[:, 0], coords_display[:, 1], c=c, s=spot_size, cmap=cmap, vmin=vmin, vmax=vmax, linewidths=0)
+
+        ax.set_title(str(batch), fontsize=title_fontsize)
+
+    # Limpar eixos vazios e Adicionar Legendas
+    for j in range(idx + 1, len(axes)): axes[j].axis("off")
+
+    if is_obs:
+        handles = [Patch(facecolor=color_map[str(cl)], label=str(cl)) for cl in clusters]# type: ignore
+        fig.legend(handles=handles, loc="center right", bbox_to_anchor=(1.1, 0.5), title=group)
+    elif is_gene:
+        sm = cm.ScalarMappable(norm=mpl.colors.Normalize(vmin=vmin, vmax=vmax), cmap="plasma")# type: ignore
+        fig.colorbar(sm, ax=axes, fraction=0.02, pad=0.04, label=group)
+
+    if show: plt.show()
 
 def plot_single_spatial_image(
         adata: AnnData,
@@ -385,46 +610,51 @@ def z_score_matrixplot(adata: AnnData,
                        show=True, 
                        title: str = "Z-score of connections",
                        mask_upper=True,
-                       return_object=True):
+                       return_object=True,
+                       fontsize_ticks=16,
+                       fontsize_values=12,
+                       fontsize_title=24,
+                       fontsize_labels=18,
+                       fontsize_colorbar=14):
+
+    import pandas as pd
+    import numpy as np
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import LinearSegmentedColormap
+
     # --- Initial checks ---
     if "zscore_matrix" not in adata.uns:
         raise KeyError("'zscore_matrix' key was not found in adata.uns")
     if not isinstance(adata.uns["zscore_matrix"], dict):
         raise ValueError("'zscore_matrix' is not a dictionary")
     
-    # --- Collect all unique labels (index + columns) ---
+    # --- Collect all unique labels ---
     all_labels = set()
     for key, mat in adata.uns["zscore_matrix"].items():
         df = pd.DataFrame(mat)
         all_labels.update(df.index)
         all_labels.update(df.columns)
-    all_labels = sorted(list(all_labels))  # sort for consistency
+    all_labels = sorted(list(all_labels))
 
-    # --- Create label -> position map ---
     label_to_idx = {label: idx for idx, label in enumerate(all_labels)}
 
-    # --- Create accumulation matrix ---
     matrix_size = len(all_labels)
     accumulation_matrix = np.zeros((matrix_size, matrix_size))
 
-    # --- Sum all matrices ---
+    # --- Sum matrices ---
     for key, mat in adata.uns["zscore_matrix"].items():
         matrix = pd.DataFrame(mat)
-        if not isinstance(matrix, pd.DataFrame):
-            raise ValueError(f"Key {key} in adata.uns['zscore_matrix'] is not a DataFrame")
-
         for i in matrix.index:
             for j in matrix.columns:
                 accumulation_matrix[label_to_idx[i], label_to_idx[j]] += matrix.loc[i, j]
 
-    # --- Average over all matrices ---
+    # --- Average ---
     num_matrices = len(adata.uns["zscore_matrix"])
     average_matrix = accumulation_matrix / num_matrices
 
-    # --- Convert to DataFrame for plotting ---
     corr_matrix = pd.DataFrame(average_matrix, index=all_labels, columns=all_labels)
 
-    # --- Create custom colormap ---
+    # --- Colormap ---
     vmax = corr_matrix.values.max()
     vmin = corr_matrix.values.min()
     norm_range = vmax - vmin
@@ -432,32 +662,37 @@ def z_score_matrixplot(adata: AnnData,
     colors = [(0, 'blue'), (zero_pos, 'white'), (1, 'red')]
     cmap = LinearSegmentedColormap.from_list('custom_bwr', colors)
 
-    # --- Apply mask to remove upper triangle ---
+    # --- Mask ---
     mask = np.triu(np.ones_like(corr_matrix, dtype=bool)) if mask_upper else None
     masked_matrix = np.ma.masked_where(mask, corr_matrix) if mask is not None else corr_matrix
 
     # --- Plot ---
     plt.figure(figsize=(18, 12))
-    plt.imshow(masked_matrix, cmap=cmap, interpolation='nearest', 
-               vmin=vmin, vmax=vmax)
-    plt.colorbar()
+    im = plt.imshow(masked_matrix, cmap=cmap, interpolation='nearest', 
+                    vmin=vmin, vmax=vmax)
 
-    # --- Add numerical values (only lower triangle) ---
+    cbar = plt.colorbar(im)
+    cbar.ax.tick_params(labelsize=fontsize_colorbar)
+
+    # --- Values ---
     n = corr_matrix.shape[0]
     for i in range(n):
         for j in range(i):
             if i != j:
                 plt.text(j, i, f'{corr_matrix.iloc[i, j]:.2f}', 
-                         ha='center', va='center', color='black', fontsize=10)
+                         ha='center', va='center', 
+                         color='black', fontsize=fontsize_values)
 
-    # --- Axis and title ---
-    plt.xticks(ticks=np.arange(n), labels=corr_matrix.columns, rotation=45, ha='right')#type: ignore
-    plt.yticks(ticks=np.arange(n), labels=corr_matrix.index)#type: ignore
-    plt.tick_params(axis="x", labelsize=12)
-    plt.tick_params(axis="y", labelsize=12)
-    plt.title(title, fontsize=20)
-    plt.xlabel('x-axis clusters', fontsize=16)
-    plt.ylabel('y-axis clusters', fontsize=16)
+    # --- Axis ---
+    plt.xticks(ticks=np.arange(n), labels=list(corr_matrix.columns), rotation=45, ha='right')
+    plt.yticks(ticks=np.arange(n), labels=list(corr_matrix.index))
+
+    plt.tick_params(axis="x", labelsize=fontsize_ticks)
+    plt.tick_params(axis="y", labelsize=fontsize_ticks)
+
+    plt.title(title, fontsize=fontsize_title)
+    plt.xlabel('x-axis clusters', fontsize=fontsize_labels)
+    plt.ylabel('y-axis clusters', fontsize=fontsize_labels)
 
     if show:
         plt.tight_layout()
@@ -476,7 +711,7 @@ def boxplot_cluster_correlations(adata: AnnData,
                                  title_font: int = 25,
                                  label_font: int = 18,
                                  ticks_font: int = 18,
-                                 limits: tuple[float, float] = (None, None)
+                                 limits: Union[tuple[float, float], tuple[None, None]] = (None, None)
                                  ):
     """
     Generate a horizontal boxplot based on inter-cluster correlations (avoiding duplicate symmetric pairs).
@@ -710,7 +945,7 @@ def outlier_quality(
             if adata.var["gene_ids"].str.startswith("ENSG").iloc[0] == True:
                 adata.var["mt"] = adata.var_names.str.startswith("MT-")
             else:
-                adata.var["mt"] = adata.var["gene_ids"].str.startswith("MT-")
+                adata.var["mt"] = adata.var["gene_ids"].str.startswith("MT-")# type:ignore
             sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], inplace=True)
 
         # make sure that all the gene names are unique
@@ -900,8 +1135,11 @@ def corr_spearman(adata: AnnData,
                   pval_matrix
                   ):
     # Extrair os nomes das colunas sem cortar errado
+    obsm_data = adata.obsm["q05_cell_abundance_w_sf"]
+    if isinstance(obsm_data, np.ndarray):
+        obsm_data = pd.DataFrame(obsm_data)
     names = [col.replace("q05cell_abundance_w_sf_", "") 
-            for col in adata.obsm["q05_cell_abundance_w_sf"].columns]
+            for col in obsm_data.columns]
       
     # Criar clustermap (com clustering automático de linhas e colunas)
     cg = sns.clustermap(
@@ -923,82 +1161,140 @@ def corr_spearman(adata: AnnData,
     plt.savefig("heatmap_spearman_clustered.png", dpi=300)
     plt.close()
 
-### deprecated
-def plot_bar_by_batch(adata: AnnData, clusters_col: str) -> None:
-    # Verificar se cluster_col está em adata.obs
-    if clusters_col not in adata.obs.columns:
-        raise ValueError(f"A coluna '{clusters_col}' não está em adata.obs")
+def preprocessing_quality_metrics(
+    adatas: dict,
+    title: str = "Quality Metrics: Aggregate (Top) and Individual (Bottom)",
+    xlabel: str = "Filtering Stages",
+    ylabel_top: str = "Total Sum",
+    ylabel_bottom: str = "Spots per Sample",
+    x_labels: list = ["A\n(Raw)", "B\n(Counts & Genes)", "C\n(MT Filter)"],
+    legend_title_bottom: str = "Samples",
+    legend_label_top: str = "Total Sum",
+    figsize: tuple = (12, 9),
+    save_path = None,
+    font_size_base: int = 18,
+    colors: Optional[list] = None,
+    dodge: float = 0.02  # ← novo parâmetro
+):
+    """
+    Quality plot for preprocessing using st.pp.Preprocessing.run
+    example:
+    >>> import spatools as st
+    >>> adatas: dict = st.read("/path/to/your/directory")
+    >>> adatas = st.pp.Preprocessing.run("MAD_combined", adatas_dict=adatas)
+    >>> df = st.pl.preprocessing_quality_metrics(adatas)
+    """
     
-    # Verificar se as cores estão definidas em adata.uns
-    color_key = f"{clusters_col}_colors"
-    if color_key not in adata.uns:
-        raise ValueError(f"As cores para '{clusters_col}' não estão definidas em adata.uns['{color_key}']")
+    # 1. Data Extraction
+    adatas_list = list(adatas.values()) if isinstance(adatas, dict) else adatas
     
-    # Obter as cores dos clusters
-    cluster_colors = adata.uns[color_key]
+    if colors is None:
+        colors = list(plt.get_cmap('tab20')(np.linspace(0, 1, len(adatas_list))))
 
-    # Agrupar dados por batch e clusters_col
-    count_data = adata.obs.groupby(['batch', clusters_col]).size().unstack(fill_value=0)
+    all_values = []
+    sample_names = []
 
-    # Calcular a porcentagem
-    percentage_data = count_data.div(count_data.sum(axis=1), axis=0) * 100#type: ignore
+    for adata in adatas_list:
+        stats_key = next((k for k in adata.uns.keys() if k.startswith("preprocessing_stats_")), None)
+        if stats_key is None:
+            continue
+            
+        stats = adata.uns[stats_key]
+        values = [
+            stats.get("initial_n_spots", np.nan),
+            stats.get("n_after_combined_filter", np.nan),
+            stats.get("n_after_mt_filter", np.nan)
+        ]
+        all_values.append(values)
+        sample_names.append(stats.get("sample_id", "Unknown"))
 
-    # Definir cores usando a paleta de cores do AnnData
-    cluster_labels = percentage_data.columns
-    colors = [cluster_colors[int(label)] for label in cluster_labels]
+    all_values = np.array(all_values)
+    df = pd.DataFrame(all_values, columns=["Raw", "Counts&Genes", "MT"], index=sample_names)
+    step_sums = df.sum(axis=0)
 
-    # Plotar gráfico de barras empilhadas
-    ax = percentage_data.plot(kind='bar', stacked=True, figsize=(12, 6), color=colors)
-    ax.set_title(f'Porcentagem de clusters em {clusters_col} para cada amostra', fontsize=25)
-    ax.set_xlabel('Amostras', fontsize=25)
-    ax.set_ylabel('Porcentagem (%)', fontsize=25)
-    ax.set_xticklabels(ax.get_xticklabels(), fontsize=14)
-    ax.legend(title="clusters", ncol=2, loc="right", bbox_to_anchor=(1.17, 0.5))
-    plt.tight_layout()
+    # 2. Figure Setup
+    plt.rcParams.update({'font.size': font_size_base})
+    fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=figsize, gridspec_kw={'height_ratios': [1, 2.5]})
+    fig.subplots_adjust(hspace=0.1)
+
+    # ---------------------------------------------------------
+    # Upper Axis (ax1): Aggregate Sum + % Loss
+    # ---------------------------------------------------------
+    ax1.plot(x_labels, step_sums, marker="D", ls="-", color="darkred", lw=3, ms=10, label=legend_label_top)
+
+    for i, val in enumerate(step_sums):
+        is_last = i == len(step_sums) - 1
+        ax1.text(i, 
+                 val + (val * dodge) if is_last else val - (val * dodge),
+                 f"{int(val)}", ha="center", va="bottom", 
+                 fontweight="bold", 
+                 color="darkred", 
+                 fontsize=font_size_base
+                 )
+        
+        if i > 0:
+            prev_val = step_sums[i-1]
+            loss_pct = ((val - prev_val) / prev_val) * 100
+            mid_x = i - 0.5
+            mid_y = (val + prev_val) / 2
+            ax1.text(mid_x, mid_y, f"{loss_pct:.2f}%", ha="center", va="bottom",
+                     bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', boxstyle='round,pad=0.2'),
+                     color="red", fontweight="bold", fontsize=font_size_base)
+
+    ax1.set_title(title, fontsize=font_size_base + 2, pad=20, fontweight="bold")
+    ax1.set_ylabel(ylabel_top, fontweight="bold", fontsize=font_size_base + 1)
+    ax1.legend(loc="upper right", fontsize=font_size_base)
+
+    # ← padding para o último label não ser cortado pelo corte de eixo
+    y_min1, y_max1 = ax1.get_ylim()
+    ax1.set_ylim(y_min1, y_max1 * 1.08)
+
+    # ---------------------------------------------------------
+    # Lower Axis (ax2): Individual Trends
+    # ---------------------------------------------------------      
+    for i in range(all_values.shape[0]):
+        ax2.plot(x_labels, all_values[i], marker=".", ls="-", alpha=0.6, color=colors[i], label=sample_names[i])
+
+    ax2.set_xlabel(xlabel, fontweight="bold", fontsize=font_size_base + 1)
+    ax2.set_ylabel(ylabel_bottom, fontweight="bold", fontsize=font_size_base + 1)
+    
+    # Legend formatting
+    if len(adatas) <= 10:
+        ncol = 1
+    elif len(adatas) <= 20:
+        ncol = 2
+    elif len(adatas) <= 30:
+        ncol = 3
+    else:
+        print("Too many data, max number of cols is 3")
+        ncol = 3
+
+    ax2.legend(title=legend_title_bottom, ncol=ncol, bbox_to_anchor=(1.02, 1), 
+               loc="upper left", fontsize=font_size_base - 2, title_fontsize=font_size_base)
+
+    # ---------------------------------------------------------
+    # Aesthetics & Broken Axis
+    # ---------------------------------------------------------
+    ax1.spines['bottom'].set_visible(False)
+    ax2.spines['top'].set_visible(False)
+    ax1.tick_params(labeltop=False, bottom=False, labelsize=font_size_base)
+    ax2.tick_params(labelsize=font_size_base)
+
+    # ← axhlines depois do set_ylim para pegar os limites corretos
+    ax1.axhline(ax1.get_ylim()[0], color='black', ls=':', lw=1)
+    ax2.axhline(ax2.get_ylim()[1], color='black', ls=':', lw=1)
+
+    d = .012  
+    kwargs = dict(transform=ax1.transAxes, color='black', clip_on=False, lw=2)
+    ax1.plot((-d, +d), (-d, +d), **kwargs)        
+    ax1.plot((1 - d, 1 + d), (-d, +d), **kwargs)  
+    kwargs.update(transform=ax2.transAxes)  
+    ax2.plot((-d, +d), (1 - d, 1 + d), **kwargs)  
+    ax2.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)  
+
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight', dpi=200)
+        print(f"✅ Figure saved to: {save_path}")
+
     plt.show()
-
-def plot_bar_by_group(adata: AnnData, clusters_col: str = "leiden_0.5") -> None:
-    # Verificar se a coluna 'response' está em adata.obs
-    if 'response' not in adata.obs.columns:
-        raise ValueError("A coluna 'response' não está em bdata.obs")
-    
-    # Agrupar dados por response e cluster_col
-    count_data = adata.obs.groupby(['response', clusters_col]).size().unstack(fill_value=0)
-
-    # Reordenar as colunas na ordem GR, PR, BR
-    count_data = count_data.reindex(['GOR', 'PAR', 'POR'])
-
-    # Calcular a porcentagem
-    percentage_data = count_data.div(count_data.sum(axis=1), axis=0) * 100#type: ignore
-
-    # Definir as cores para os batches (opcional: pode ser ajustado conforme necessário)
-    batch_colors = adata.uns[clusters_col + "_colors"]
-    batch_labels = percentage_data.columns
-    colors = [batch_colors[i % len(batch_colors)] for i in range(len(batch_labels))]
-
-    # Plotar gráfico de barras empilhadas
-    ax = percentage_data.plot(kind='bar', stacked=True, figsize=(12, 6), color=colors)
-    ax.set_title('Porcentagem clusters por tipo de resposta', fontsize=25)
-    ax.set_xlabel('Tipo de resposta', fontsize=25)
-    ax.set_ylabel('Porcentagem (%)', fontsize=25)
-    ax.set_xticklabels(ax.get_xticklabels(), fontsize=14, rotation=0)
-    ax.legend(title='Clusters', ncol=2, loc="right", bbox_to_anchor=(1.17, 0.5))
-    plt.tight_layout()
-    plt.show()
-
-
-if __name__ == "__main__":
-    import scanpy as sc
-    import spatools as st
-    from spatools.constants import COLORS_23_HEX
-
-    adata = sc.read("/mnt/SATA/spatialPaper/output/spatialPaperv2_condition.h5ad")
-
-    n_clusters = len(adata.obs["leiden_0.5"].cat.categories)
-    adata.uns["leiden_0.5_colors"] = COLORS_23_HEX[:n_clusters]
-
-    st.pl.plot_spatial_clusters(
-        adata=adata,
-        clusters_col="leiden_0.5",
-        cols=8
-    )
+    return df

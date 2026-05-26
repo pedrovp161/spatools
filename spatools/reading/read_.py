@@ -7,6 +7,7 @@ import anndata as an
 from PIL import Image
 from pathlib import Path
 from anndata import AnnData
+from typing import Union
 
 # ==========================================
 # 1. Registry System (The Internal "Engine")
@@ -186,7 +187,7 @@ def matchName(dir_path, adata):
 # ==========================================
 # 4. Public API (Try-Except Cascade)
 # ==========================================
-def read(dir_path: str = "", **kwargs) -> dict | AnnData:
+def read(dir_path: str = "", **kwargs) -> Union[dict, AnnData]:
     dir_path = dir_path or os.getcwd()
     dictionary = {}
     ordem_tentativas = ["h5ad", "visium", "free"]

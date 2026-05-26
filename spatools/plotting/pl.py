@@ -30,7 +30,7 @@ def bar(
         adata: AnnData, 
         clusters_col: str, 
         group_by: str, 
-        group_order: list = None,  # type: ignore
+        group_order: Union[list, None] = None,  # type: ignore
         title: str = '', 
         xlabel: str = '', 
         ylabel: str = 'Percentage (%)',
@@ -1298,3 +1298,14 @@ def preprocessing_quality_metrics(
 
     plt.show()
     return df
+
+if __name__ == "__main__":
+    import scanpy as sc 
+    bdata = sc.read("/mnt/SATA/spatialCourse/outputIntegrated/spatialPaperFiltered.h5ad")
+    bdata.obs_names_make_unique()
+    import spatools as st
+    spatial_plot(bdata, 
+                scatter_plot=True, # TODO teste different values here (True, False)
+                sample_key="library_id",
+                group = "library_id")# TODO teste different values here (gene, cluster, response, etc)
+

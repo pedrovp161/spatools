@@ -345,7 +345,8 @@ def spatial_plot(
     title_fontsize: int = 18,
     custom_colors: Union[dict, list, None] = None,
     show: bool = True,
-    dpi: int = 150
+    dpi: int = 150,
+    figsize: Union[None, tuple[int, int]] = None
 ) -> None:
     """
     Plot spatial data for each sample or batch using AnnData spatial coordinates and images.
@@ -397,12 +398,20 @@ def spatial_plot(
     ncols = min(ncols, n)
     nrows = int(np.ceil(n / ncols))
 
-    fig, axes = plt.subplots(
-        nrows, ncols,
-        figsize=(ncols * 4, nrows * 4),
-        dpi=dpi,
-        constrained_layout=True if scatter_plot else False
-    )
+    if not figsize:
+        fig, axes = plt.subplots(
+            nrows, ncols,
+            figsize=(ncols * 4, nrows * 4),
+            dpi=dpi,
+            constrained_layout=True if scatter_plot else False
+        )
+    else:
+        fig, axes = plt.subplots(
+            nrows, ncols,
+            figsize=figsize,
+            dpi=dpi,
+            constrained_layout=True if scatter_plot else False
+        )
     axes = np.atleast_1d(axes).flatten()
 
     # --- 1. Verificação de Modo ---
@@ -1301,11 +1310,12 @@ def preprocessing_quality_metrics(
 
 if __name__ == "__main__":
     import scanpy as sc 
-    bdata = sc.read("/mnt/SATA/spatialCourse/outputIntegrated/spatialPaperFiltered.h5ad")
+    bdata = sc.read("/mnt/SATA/spatialPaper/output/spatialPaperFiltered.h5ad")
     bdata.obs_names_make_unique()
     import spatools as st
     spatial_plot(bdata, 
-                scatter_plot=True, # TODO teste different values here (True, False)
+                scatter_plot=False, # TODO teste different values here (True, False)
                 sample_key="library_id",
-                group = "library_id")# TODO teste different values here (gene, cluster, response, etc)
+                group = "library_id",
+                figsize=(17,10))# TODO teste different values here (gene, cluster, response, etc)
 

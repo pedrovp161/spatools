@@ -7,7 +7,6 @@ import seaborn as sns
 import matplotlib as mpl
 import matplotlib.colors
 from copy import deepcopy
-import matplotlib.cm as cm
 from anndata import AnnData
 from scipy.stats import norm
 import matplotlib.pyplot as plt
@@ -25,6 +24,19 @@ DEFAULT_COLORS = [
     "#676bc6", "#db9448", "#40bbce", "#1d19e6", "#e7b4e9",
     "#4ebba0", "#ca6f87", "#615963"
 ]
+
+def calcular_ncol(n_itens, max_cols=3, min_cols=1, itens_por_coluna=5):
+    """
+    Calcula número de colunas baseado na densidade desejada
+    
+    Args:
+        n_itens: número total de itens
+        max_cols: número máximo de colunas permitido
+        min_cols: número mínimo de colunas
+        itens_por_coluna: itens ideais por coluna
+    """
+    ncol = max(min_cols, min(max_cols, (n_itens + itens_por_coluna - 1) // itens_por_coluna))
+    return ncol
 
 def bar(
         adata: AnnData, 
@@ -189,7 +201,7 @@ def bar(
 
         else:
             # 🎯 fallback automático
-            cmap = cm.get_cmap("tab20", n_clusters)
+            cmap = plt.get_cmap("tab20", n_clusters)
             colors = [cmap(i) for i in range(n_clusters)]
 
     ax = data_to_plot.plot(
@@ -204,9 +216,11 @@ def bar(
     ax.set_ylabel(ylabel, fontsize=23)
     ax.set_xticklabels(ax.get_xticklabels(), fontsize=14, rotation=angle)
 
+    ncol = calcular_ncol(n_itens=len(clusters_col), max_cols=3, min_cols=1, itens_por_coluna=10)
+
     ax.legend(
         title=legend,
-        ncol=2,
+        ncol = ncol,
         loc="upper left",
         bbox_to_anchor=(1.05, 1)
     )
@@ -537,84 +551,6 @@ def spatial_plot(
 
     if show: plt.show()
 
-def plot_single_spatial_image(
-        adata: AnnData,
-        clusters_col: str = "leiden_0.5",
-        scale_factor: int = 3000,
-        output_file=None,
-        scale: int = 6,
-        title: bool = True,
-        size=1.5,
-        dpi: int = 1000):
-    """
-    Plots a single spatial image for each sample in the AnnData object.
-
-    Parameters
-    ----------
-    adata : AnnData
-        AnnData object containing the data.
-    clusters_col : str, optional
-        Name of the column containing the clusters (default: "leiden_0.5").
-    scale_factor : int, optional
-        Scale factor for the image (default: 3000).
-    output_file : str, optional
-        Path to the output file (optional).
-    scale : int, optional
-        Scale factor for the figure (default: 6).
-    title : bool, optional
-        If True, adds the sample title (default: True).
-    size : float, optional
-        Size of the points in the plot (default: 1.5).
-    dpi : int, optional
-        Resolution of the output image (default: 1000).
-
-    Returns
-    -------
-    None
-        The function displays the plot.
-    """
-
-
-    keynames = adata.obs["batch"].unique()
-
-    # Mapeamento das cores dos clusters
-    clusters_colors = dict(
-        zip([str(i) for i in range(len(adata.uns[f"{clusters_col}_colors"]))], adata.uns[f"{clusters_col}_colors"])
-    )
-
-    # Iterar sobre as amostras para plotar uma por vez
-    for library in keynames:
-        ad = adata[adata.obs['batch'] == library, :].copy()
-
-        # Criar uma nova figura para cada amostra com largura e altura iguais
-        plt.figure(figsize=(scale * 2, scale * 2))  # Aumenta o tamanho da figura
-        sc.pl.spatial(
-            ad,
-            img_key="hires",
-            library_id=library,
-            color=f"{clusters_col}",
-            size=size,
-            legend_loc=None,
-            show=False,
-            scale_factor=scale_factor,
-            frameon=False,
-            palette=[
-                v for k, v in clusters_colors.items() if k in ad.obs[f'{clusters_col}'].unique().tolist()]
-        )
-
-        # Condição para adicionar o título
-        if title:
-            plt.title(library, fontsize=25)
-        else:
-            plt.gca().set_title('')
-
-        if output_file:
-            if not os.path.exists(os.path.dirname(output_file)):
-                os.makedirs(output_file)
-            plt.savefig(f"{output_file}_{library}.png", format="png", dpi=dpi)  # Ajusta a resolução
-            
-        plt.show()
-
 def z_score_matrixplot(adata: AnnData, 
                        show=True, 
                        title: str = "Z-score of connections",
@@ -832,7 +768,9 @@ def extract_P_number(file_name: str) -> int:
     match = re.search(r'P(\d+)', file_name)
     return int(match.group(1)) if match else float('inf')  # Inf se não encontrar # type: ignore
 
-def sample_classifier(file_name: str, classification_dict: dict) -> str:
+def sample_classifier(file_name: str, 
+                      classification_dict: dict
+                      ) -> str:
     """Classifies a sample based on the file name using a classification dictionary."""
     for key, value in classification_dict.items():
         if key in file_name:
@@ -1174,138 +1112,249 @@ def preprocessing_quality_metrics(
     adatas: dict,
     title: str = "Quality Metrics: Aggregate (Top) and Individual (Bottom)",
     xlabel: str = "Filtering Stages",
-    ylabel_top: str = "Total Sum",
+    ylabel_top: str = "Total Spots",
     ylabel_bottom: str = "Spots per Sample",
-    x_labels: list = ["A\n(Raw)", "B\n(Counts & Genes)", "C\n(MT Filter)"],
+    x_labels: Optional[list] = None,
+    loss_pct_positions: Optional[list] = None,   # ← NOVO
+    total_positions: Optional[list] = None,      # ← NOVO
     legend_title_bottom: str = "Samples",
     legend_label_top: str = "Total Sum",
     figsize: tuple = (12, 9),
-    save_path = None,
+    save_path=None,
     font_size_base: int = 18,
-    colors: Optional[list] = None,
-    dodge: float = 0.02  # ← novo parâmetro
+    colors: Optional[list] = None
 ):
     """
     Quality plot for preprocessing using st.pp.Preprocessing.run
-    example:
-    >>> import spatools as st
-    >>> adatas: dict = st.read("/path/to/your/directory")
-    >>> adatas = st.pp.Preprocessing.run("MAD_combined", adatas_dict=adatas)
-    >>> df = st.pl.preprocessing_quality_metrics(adatas)
     """
-    
+
+    # ---------------------------------------------------------
     # 1. Data Extraction
+    # ---------------------------------------------------------
     adatas_list = list(adatas.values()) if isinstance(adatas, dict) else adatas
-    
+
     if colors is None:
-        colors = list(plt.get_cmap('tab20')(np.linspace(0, 1, len(adatas_list))))
+        colors = list(
+            plt.get_cmap("tab20")(
+                np.linspace(0, 1, len(adatas_list))
+            )
+        )
 
     all_values = []
     sample_names = []
 
     for adata in adatas_list:
-        stats_key = next((k for k in adata.uns.keys() if k.startswith("preprocessing_stats_")), None)
+        stats_key = next(
+            (k for k in adata.uns.keys() if k.startswith("preprocessing_stats_")),
+            None
+        )
+
         if stats_key is None:
             continue
-            
+
         stats = adata.uns[stats_key]
+
         values = [
             stats.get("initial_n_spots", np.nan),
-            stats.get("n_after_combined_filter", np.nan),
-            stats.get("n_after_mt_filter", np.nan)
+            stats.get("n_after_counts_or_genes_outlier", np.nan),
+            stats.get("n_after_mt_outlier", np.nan),
+            stats.get("n_after_mt_threshold", np.nan)
         ]
+
         all_values.append(values)
         sample_names.append(stats.get("sample_id", "Unknown"))
 
-    all_values = np.array(all_values)
-    df = pd.DataFrame(all_values, columns=["Raw", "Counts&Genes", "MT"], index=sample_names)
+    all_values = np.array(all_values, dtype=float)
+
+    if all_values.size == 0:
+        raise ValueError("Nenhum dado válido de 'preprocessing_stats_' foi encontrado.")
+
+    # ---------------------------------------------------------
+    # Filtro Dinâmico de Colunas
+    # ---------------------------------------------------------
+    num_steps = all_values.shape[1]
+    default_columns = [f"Step_{i+1}" for i in range(num_steps)]
+    
+    if x_labels is None:
+        x_labels = [f"Stage {chr(65+i)}" for i in range(num_steps)]
+    
+    valid_cols = ~np.all(np.isnan(all_values), axis=0)
+    all_values = all_values[:, valid_cols]
+    columns = np.array(default_columns)[valid_cols]
+    x_labels = np.array(x_labels)[valid_cols]# type: ignore
+
+    df = pd.DataFrame(all_values, columns=columns, index=sample_names)
     step_sums = df.sum(axis=0)
 
+    # ---------------------------------------------------------
     # 2. Figure Setup
+    # ---------------------------------------------------------
     plt.rcParams.update({'font.size': font_size_base})
-    fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=figsize, gridspec_kw={'height_ratios': [1, 2.5]})
+
+    fig, (ax1, ax2) = plt.subplots(
+        2,
+        1,
+        sharex=True,
+        figsize=figsize,
+        gridspec_kw={'height_ratios': [1, 2.5]}
+    )
+
     fig.subplots_adjust(hspace=0.1)
 
     # ---------------------------------------------------------
-    # Upper Axis (ax1): Aggregate Sum + % Loss
+    # Upper Axis (Agregado)
     # ---------------------------------------------------------
-    ax1.plot(x_labels, step_sums, marker="D", ls="-", color="darkred", lw=3, ms=10, label=legend_label_top)
+    ax1.plot(
+        x_labels,
+        step_sums,
+        marker="D",
+        ls="-",
+        color="darkred",
+        lw=3,
+        ms=10,
+        label=legend_label_top
+    )
+
+    # -------- TOTAL VALUES (NOVO CONTROLE) --------
+    n_points = len(step_sums)
+
+    if total_positions is not None:
+        if len(total_positions) != n_points:
+            print(f"⚠️ Ajustando total_positions automaticamente ({len(total_positions)} → {n_points})")
+
+        total_positions_adj = (
+            total_positions[:n_points] +
+            ["top"] * max(0, n_points - len(total_positions))
+        )
+    else:
+        total_positions_adj = ["top"] * n_points
 
     for i, val in enumerate(step_sums):
-        is_last = i == len(step_sums) - 1
-        ax1.text(i, 
-                 val + (val * dodge) if is_last else val - (val * dodge),
-                 f"{int(val)}", ha="center", va="bottom", 
-                 fontweight="bold", 
-                 color="darkred", 
-                 fontsize=font_size_base
-                 )
-        
-        if i > 0:
-            prev_val = step_sums[i-1]
-            loss_pct = ((val - prev_val) / prev_val) * 100
-            mid_x = i - 0.5
-            mid_y = (val + prev_val) / 2
-            ax1.text(mid_x, mid_y, f"{loss_pct:.2f}%", ha="center", va="bottom",
-                     bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', boxstyle='round,pad=0.2'),
-                     color="red", fontweight="bold", fontsize=font_size_base)
+
+        pos = total_positions_adj[i].lower()
+
+        if pos == "top":
+            y_offset = 12
+            va = "bottom"
+        else:
+            y_offset = -12
+            va = "top"
+
+        ax1.annotate(
+            f"{int(val)}",
+            xy=(i, val),
+            xytext=(0, y_offset),
+            textcoords="offset points",
+            ha="center",
+            va=va,
+            fontweight="bold",
+            color="darkred",
+            fontsize=font_size_base
+        )
+
+    # -------- LOSS PERCENTAGES (CORRIGIDO) --------
+    n_intervals = len(step_sums) - 1
+
+    if loss_pct_positions is not None:
+        if len(loss_pct_positions) != n_intervals:
+            print(f"⚠️ Ajustando loss_pct_positions automaticamente ({len(loss_pct_positions)} → {n_intervals})")
+
+        loss_pct_positions_adj = (
+            loss_pct_positions[:n_intervals] +
+            ["bottom"] * max(0, n_intervals - len(loss_pct_positions))
+        )
+    else:
+        loss_pct_positions_adj = ["bottom"] * n_intervals
+
+    for i in range(1, len(step_sums)):
+        val = step_sums.iloc[i]
+        prev_val = step_sums.iloc[i - 1]
+
+        loss_pct = ((val - prev_val) / prev_val * 100) if prev_val > 0 else 0.0
+
+        mid_x = i - 0.5
+        mid_y = (val + prev_val) / 2
+
+        pos = loss_pct_positions_adj[i - 1].lower()
+
+        if pos == "top":
+            y_offset = 25
+            va = "bottom"
+        else:
+            y_offset = -25
+            va = "top"
+
+        ax1.annotate(
+            f"{loss_pct:.2f}%",
+            xy=(mid_x, mid_y),
+            xytext=(0, y_offset),
+            textcoords="offset points",
+            ha="center",
+            va=va,
+            bbox=dict(facecolor='white', alpha=0.8, edgecolor='none', boxstyle='round,pad=0.2'),
+            color="red" if loss_pct < 0 else "green",
+            fontweight="bold",
+            fontsize=font_size_base - 2
+        )
 
     ax1.set_title(title, fontsize=font_size_base + 2, pad=20, fontweight="bold")
-    ax1.set_ylabel(ylabel_top, fontweight="bold", fontsize=font_size_base + 1)
-    ax1.legend(loc="upper right", fontsize=font_size_base)
+    ax1.set_ylabel(ylabel_top, fontweight="bold", fontsize=font_size_base - 2)
+    ax1.legend(loc="upper right", fontsize=font_size_base - 2)
 
-    # ← padding para o último label não ser cortado pelo corte de eixo
     y_min1, y_max1 = ax1.get_ylim()
-    ax1.set_ylim(y_min1, y_max1 * 1.08)
+    ax1.set_ylim(y_min1, y_max1 * 1.15)
 
     # ---------------------------------------------------------
-    # Lower Axis (ax2): Individual Trends
-    # ---------------------------------------------------------      
+    # Lower Axis (Individual)
+    # ---------------------------------------------------------
     for i in range(all_values.shape[0]):
-        ax2.plot(x_labels, all_values[i], marker=".", ls="-", alpha=0.6, color=colors[i], label=sample_names[i])
+        ax2.plot(
+            x_labels,
+            all_values[i],
+            marker=".",
+            ls="-",
+            alpha=0.7,
+            color=colors[i],
+            label=sample_names[i]
+        )
 
     ax2.set_xlabel(xlabel, fontweight="bold", fontsize=font_size_base + 1)
-    ax2.set_ylabel(ylabel_bottom, fontweight="bold", fontsize=font_size_base + 1)
-    
-    # Legend formatting
-    if len(adatas) <= 10:
-        ncol = 1
-    elif len(adatas) <= 20:
-        ncol = 2
-    elif len(adatas) <= 30:
-        ncol = 3
-    else:
-        print("Too many data, max number of cols is 3")
-        ncol = 3
+    ax2.set_ylabel(ylabel_bottom, fontweight="bold", fontsize=font_size_base - 2)
 
-    ax2.legend(title=legend_title_bottom, ncol=ncol, bbox_to_anchor=(1.02, 1), 
-               loc="upper left", fontsize=font_size_base - 2, title_fontsize=font_size_base)
+    ncol = 1 if len(sample_names) <= 10 else (2 if len(sample_names) <= 20 else 3)
+    ax2.legend(
+        title=legend_title_bottom,
+        ncol=ncol,
+        bbox_to_anchor=(1.02, 1),
+        loc="upper left",
+        fontsize=font_size_base - 2,
+        title_fontsize=font_size_base
+    )
 
     # ---------------------------------------------------------
-    # Aesthetics & Broken Axis
+    # Eixo quebrado
     # ---------------------------------------------------------
     ax1.spines['bottom'].set_visible(False)
     ax2.spines['top'].set_visible(False)
-    ax1.tick_params(labeltop=False, bottom=False, labelsize=font_size_base)
-    ax2.tick_params(labelsize=font_size_base)
 
-    # ← axhlines depois do set_ylim para pegar os limites corretos
-    ax1.axhline(ax1.get_ylim()[0], color='black', ls=':', lw=1)
-    ax2.axhline(ax2.get_ylim()[1], color='black', ls=':', lw=1)
+    ax1.tick_params(labeltop=False, bottom=False)
+    ax2.tick_params()
 
-    d = .012  
-    kwargs = dict(transform=ax1.transAxes, color='black', clip_on=False, lw=2)
-    ax1.plot((-d, +d), (-d, +d), **kwargs)        
-    ax1.plot((1 - d, 1 + d), (-d, +d), **kwargs)  
-    kwargs.update(transform=ax2.transAxes)  
-    ax2.plot((-d, +d), (1 - d, 1 + d), **kwargs)  
-    ax2.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)  
+    d = .012
+    kwargs = dict(transform=ax1.transAxes, color='black', clip_on=False)
+    ax1.plot((-d, +d), (-d, +d), **kwargs)
+    ax1.plot((1 - d, 1 + d), (-d, +d), **kwargs)
+
+    kwargs.update(transform=ax2.transAxes)
+    ax2.plot((-d, +d), (1 - d, 1 + d), **kwargs)
+    ax2.plot((1 - d, 1 + d), (1 - d, 1 + d), **kwargs)
 
     if save_path:
         plt.savefig(save_path, bbox_inches='tight', dpi=200)
         print(f"✅ Figure saved to: {save_path}")
 
     plt.show()
+
     return df
 
 if __name__ == "__main__":

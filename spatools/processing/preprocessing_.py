@@ -147,7 +147,7 @@ def pipeline_custom_mt(adatas_dict, threshold_mt: float = 15.0, **kwargs):
     return preprocessing(
         adatas_dict,
         genes_and_counts_outliers=True,
-        mt_percentage_outliers=False,  # Desliga o MAD para o MT
+        mt_percentage_outliers=True, 
         threshold_mt=threshold_mt,      # Aplica o corte fixo do usuário
         **kwargs
     )

@@ -54,7 +54,7 @@ class Processing:
 def pearson_pipeline(
     adata,
     n_pcs: int=50,
-    resolution: int=1.0,
+    resolution: float=1.0,
     n_hvg: int = 3000
 ):
 

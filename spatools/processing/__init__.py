@@ -1,5 +1,6 @@
 from .preprocessing_ import (
-    Preprocessing
+    Preprocessing,
+    PipelineType
 )
 
 from .processing_ import (
@@ -8,5 +9,6 @@ from .processing_ import (
 
 __all__ = [
     'Preprocessing',
-    'Processing'
+    'Processing',
+    'PipelineType'
 ]

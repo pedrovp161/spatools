@@ -1,63 +1,110 @@
-from pathlib import PurePath
+import os
+from enum import Enum
+from typing import Dict, Optional, Union
+
+import scanpy as sc
 
 from .core import preprocessing
 
-class Preprocessing:
 
+class PipelineType(Enum):
+    """
+    Registra os tipos de pipelines disponíveis, suas strings de identificação
+    e descrições detalhadas para o usuário final.
+    """
+    MAD_LOW_READS_AND_GENES = (
+        "MAD_LOW_READS_AND_GENES",
+        "Filtra outliers inferiores para contagens de reads (counts) e genes detectados separadamente, "
+        "além de remover células com alta porcentagem de expressão mitocondrial (padrão 5 MADs)."
+    )
+    MAD_COMBINED_WITH_MT = (
+        "MAD_COMBINED_WITH_MT",
+        "Filtra outliers combinando os critérios de genes e contagens em uma métrica conjunta, "
+        "além de aplicar o filtro padrão para alta porcentagem mitocondrial."
+    )
+    MAD_WITHOUT_MT = (
+        "MAD_WITHOUT_MT",
+        "Aplica o filtro combinado de genes e contagens, mas ignora completamente a "
+        "porcentagem de genes mitocondriais no processo de filtragem."
+    )
+    MAD_CUSTOM_MT = (
+        "MAD_CUSTOM_MT",
+        "Pipeline flexível: Aplica o filtro combinado de genes e contagens, e permite ao usuário "
+        "definir um limite manual (threshold) exato para a porcentagem mitocondrial máxima."
+    )
+
+    def __init__(self, name: str, description: str):
+        self._value_ = name
+        self.description = description
+
+    @classmethod
+    def help(cls):
+        """Imprime no terminal uma tabela explicativa de todas as pipelines."""
+        print("\n" + "="*90)
+        print(f"{'PIPELINE':<30} | {'DESCRIÇÃO'}")
+        print("="*90)
+        for pipeline in cls:
+            # Quebra o texto para não estourar a tela do terminal
+            desc = pipeline.description
+            print(f"{pipeline.value:<30} | {desc[:55]}...")
+            if len(desc) > 55:
+                print(f"{'':<30} | {desc[55:]}")
+            print("-"*90)
+
+
+class Preprocessing:
     pipelines = {}
 
     @classmethod
-    def register(cls, name):
+    def register(cls, name: Union[str, PipelineType]):
         def decorator(func):
-            cls.pipelines[name] = func
+            key = name.value if isinstance(name, PipelineType) else name
+            cls.pipelines[key] = func
             return func
         return decorator
     
-
     @classmethod
-    def run(cls, name, adatas_dict, **kwargs):
-        """
-        Executes a previously registered preprocessing pipeline.
+    def run(
+        cls, 
+        name: Union[str, PipelineType], 
+        adatas_dict: Dict[str, sc.AnnData], 
+        save_files: bool = False,
+        output_dir: Optional[str] = None,
+        **kwargs
+    ) -> Dict[str, sc.AnnData]:
+        """Executa a pipeline escolhida e retorna o dicionário atualizado."""
+        pipeline_key = name.value if isinstance(name, PipelineType) else name
 
-        This method acts as a dispatcher, looking up the pipeline by name 
-        in the class registry and executing it with the provided data.
+        if pipeline_key not in cls.pipelines:
+            available = list(cls.pipelines.keys())
+            raise ValueError(
+                f"Pipeline '{pipeline_key}' não encontrada.\n"
+                f"Use `PipelineType.help()` para ver as opções válidas e suas descrições."
+            )
 
-        Parameters
-        ----------
-        name : str
-            The name of the preprocessing pipeline to execute. Available default 
-            pipelines are:
-            - 'MAD_low': Filters low outliers for genes and counts separately, 
-              plus high mitochondrial percentage.
-            - 'MAD_combined': Filters outliers by combining gene and count filters,
-              plus high mitochondrial percentage.
-            - 'MAD_no_mt': Filters outliers by combining gene and count filters, 
-              but ignores the mitochondrial percentage filter.
-        adatas_dict : dict
-            A dictionary containing spatial transcriptomics data (Visium 10X).
-            Keys are sample names and values are AnnData objects.
-        **kwargs : dict, optional
-            Additional arguments that will be passed down to the core `preprocessing` 
-            function. Common arguments include `output_dir` (str) and `save_files` (bool).
+        result = cls.pipelines[pipeline_key](
+            adatas_dict, 
+            save_files=save_files, 
+            output_dir=output_dir, 
+            **kwargs
+        )
+        
+        # Se o resultado for um dicionário (dict), assume que é o resultado filtrado
+        # Caso contrário, assume que é um aviso e retorna o dicionário original
+        if isinstance(result, dict) and set(result.keys()) == set(adatas_dict.keys()):
+            return result
+        else:
+            if result:
+                print(f"[AVISO Preprocessing]: \n{result}")
+            return adatas_dict
 
-        Returns
-        -------
-        None or str
-            Returns a warning string if there is redundancy in the applied filters 
-            (e.g., genes_and_counts_outliers and genes_outliers simultaneously). 
-            Otherwise, modifies `adatas_dict` in-place and returns None.
 
-        Raises
-        ------
-        KeyError
-            If the provided `name` is not registered in the `cls.pipelines` dictionary.
-        """
-        return cls.pipelines[name](adatas_dict, **kwargs)
-              
+# ==============================================================================
+# DEFINIÇÃO DAS PIPELINES
+# ==============================================================================
 
-@Preprocessing.register("MAD_low")
-def pipeline_MAD_low(adatas_dict, **kwargs):
-
+@Preprocessing.register(PipelineType.MAD_LOW_READS_AND_GENES)
+def pipeline_low_reads_genes(adatas_dict, **kwargs):
     return preprocessing(
         adatas_dict,
         genes_outliers=True,
@@ -67,9 +114,8 @@ def pipeline_MAD_low(adatas_dict, **kwargs):
         **kwargs
     )
 
-@Preprocessing.register("MAD_combined")
-def pipeline_MAD_combined(adatas_dict, **kwargs):
-
+@Preprocessing.register(PipelineType.MAD_COMBINED_WITH_MT)
+def pipeline_combined_with_mt(adatas_dict, **kwargs):
     return preprocessing(
         adatas_dict,
         genes_and_counts_outliers=True,
@@ -77,9 +123,8 @@ def pipeline_MAD_combined(adatas_dict, **kwargs):
         **kwargs
     )
 
-@Preprocessing.register("MAD_no_mt")
-def pipeline_MAD_no_mt(adatas_dict, **kwargs):
-
+@Preprocessing.register(PipelineType.MAD_WITHOUT_MT)
+def pipeline_without_mt(adatas_dict, **kwargs):
     return preprocessing(
         adatas_dict,
         genes_and_counts_outliers=True,
@@ -87,19 +132,46 @@ def pipeline_MAD_no_mt(adatas_dict, **kwargs):
         **kwargs
     )
 
+@Preprocessing.register(PipelineType.MAD_CUSTOM_MT)
+def pipeline_custom_mt(adatas_dict, threshold_mt: float = 15.0, **kwargs):
+    """
+    Pipeline flexível com limite manual para porcentagem mitocondrial.
+    Recebe um parâmetro explícito `threshold_mt` (ex: 15.0 para 15%).
+    """
+    # Valida que threshold_mt é um número válido
+    try:
+        threshold_mt = float(threshold_mt)
+    except (TypeError, ValueError):
+        raise ValueError(f"threshold_mt deve ser um número entre 0 e 100, recebido: {threshold_mt!r}")
+    
+    return preprocessing(
+        adatas_dict,
+        genes_and_counts_outliers=True,
+        mt_percentage_outliers=False,  # Desliga o MAD para o MT
+        threshold_mt=threshold_mt,      # Aplica o corte fixo do usuário
+        **kwargs
+    )
+
+
+# ==============================================================================
+# EXEMPLO DE USO
+# ==============================================================================
 if __name__ == "__main__":
-    from preprocessing_ import Preprocessing
-    import scanpy as sc
-    import os
+    
+    # 1. O usuário está em dúvida? Ele pode rodar isso no Jupyter/Terminal:
+    PipelineType.help()
 
-    # 1. Mapeie e carregue seus arquivos
+    # Simulando os dados do usuário
     data_dir = "/mnt/SATA/spatialPaper/data/corrected"
-    files = [f for f in os.listdir(data_dir) if f.endswith('.h5ad')]
+    if os.path.exists(data_dir):
+        files = [f for f in os.listdir(data_dir) if f.endswith('.h5ad')]
+        meu_dict_adatas = {f.replace('.h5ad', ''): sc.read_h5ad(os.path.join(data_dir, f)) for f in files}
 
-    # Criando o dicionário {nome: objeto_adata}
-    meu_dict_adatas = {f.replace('.h5ad', ''): sc.read_h5ad(os.path.join(data_dir, f)) for f in files}
-
-    # 2. Agora sim, rode o preprocessing
-    mydata = Preprocessing.run("MAD_combined", adatas_dict=meu_dict_adatas, save_files=False)
-
-    print(mydata)
+        # 2. Executando a nova pipeline customizada:
+        # Note que agora o parâmetro mt_threshold aparece no autocomplete!
+        meu_dict_processado = Preprocessing.run(
+            name=PipelineType.MAD_CUSTOM_MT, 
+            adatas_dict=meu_dict_adatas, 
+            mt_threshold=10.5, # Usuário escolheu cortar em 10.5%
+            save_files=False
+        )

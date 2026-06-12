@@ -8,7 +8,7 @@ with open('README.md', 'r', encoding='utf-8') as arq:
 
 install_requires = ["scanpy>=1.10.1", "mygene", "scikit-image"]
 
-VERSION = '0.37'
+VERSION = '0.38'
 DESCRIPTION = 'This comprehensive toolkit enables the analysis of multiple spatial transcriptomics datasets, offering a wide range of analytical capabilities. It supports various types of analyses, including detailed plotting and advanced image analysis, to help you gain deeper insights into your spatial transcriptomics data.'
 
 # Configuração do setup
@@ -21,6 +21,7 @@ setup(
     long_description_content_type="text/markdown",
     long_description=readme,
     packages=find_packages(),
+    package_data={"spatools": ["py.typed"]},
     install_requires=install_requires,  # Melhorar os requests conforme necessário
     python_requires=">=3.9",
     extras_require={  # Dependências opcionais para desenvolvimento

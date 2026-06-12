@@ -1,89 +1,89 @@
-from anndata import ImplicitModificationWarning
-import scanpy as sc
-import numpy as np
-import warnings
 import os
+import warnings
 
-# outlier detection
-def is_outlier(x, 
-               k: float = 4, 
-               method = 'both'
-               ) -> np.ndarray:
+import numpy as np
+import scanpy as sc
+from anndata import AnnData, ImplicitModificationWarning
+
+
+# ── Outlier detection ──────────────────────────────────────────────────────────
+
+_VALID_METHODS = {"high", "low", "both"}
+
+
+def is_outlier(x, k: float = 4, method: str = "both") -> np.ndarray:
     """
-    Identify outliers in an array of values using Median Absolute Deviation (MAD).
+    Identify outliers using Median Absolute Deviation (MAD).
 
     Parameters
     ----------
     x : array-like
-        Input array of values.
-    k : int, optional
-        The number of median absolute deviations from the median to consider a value
-        an outlier. Default is 4.
-    method : str, optional
-        Method to identify outliers:
-        - 'high': identify only high outliers (values above median + k*MAD)
-        - 'low': identify only low outliers (values below median - k*MAD)  
-        - 'both': identify both high and low outliers (default)
+        Input values.
+    k : float
+        Number of MADs from the median to consider a value an outlier.
+    method : {'high', 'low', 'both'}
+        Direction of outlier detection.
 
     Returns
     -------
-    boolean array
-        Boolean array indicating which values are outliers.
+    np.ndarray
+        Boolean mask — True where a value is an outlier.
 
-    Notes
-    -----
-    This function uses the Median Absolute Deviation (MAD) to identify outliers.
-    The MAD is a robust measure of the spread of the data, and outliers are defined
-    as values that are more than k times the MAD away from the median.
-    
     Examples
     --------
-    >>> data = [1, 2, 3, 4, 5, 100]  # 100 is a high outlier
-    >>> is_outlier(data, method='high')
-    array([False, False, False, False, False, True])
-    
-    >>> data = [-100, 2, 3, 4, 5, 6]  # -100 is a low outlier
-    >>> is_outlier(data, method='low') 
-    array([True, False, False, False, False, False])
-    
-    >>> data = [-100, 2, 3, 4, 5, 100]  # both -100 and 100 are outliers
-    >>> is_outlier(data, method='both')
-    array([True, False, False, False, False, True])
+    >>> is_outlier([1, 2, 3, 4, 5, 100], method="high")
+    array([False, False, False, False, False,  True])
     """
-    x = np.asarray(x)
+    if method not in _VALID_METHODS:
+        raise ValueError(f"method must be one of {_VALID_METHODS}, got {method!r}")
 
+    x = np.asarray(x, dtype=float)
     median = np.median(x)
     deviation = x - median
     mad = np.median(np.abs(deviation))
 
     if mad == 0:
-        return np.zeros_like(x, dtype=bool)
+        return np.zeros(len(x), dtype=bool)
 
     threshold = k * mad
-
     conditions = {
         "high": deviation > threshold,
-        "low": deviation < -threshold,
+        "low":  deviation < -threshold,
         "both": np.abs(deviation) > threshold,
     }
+    return conditions[method]
 
-    try:
-        return conditions[method]
-    except KeyError:
-        raise ValueError("method must be 'high', 'low', or 'both'")
 
-# saving files
-def save_spatial_files(output_dir: str, adatas_dict: dict):# TODO verificar se deveria estar aqui
-    # supress irrelevant warning
-    warnings.filterwarnings("ignore", message="Trying to modify attribute", category=ImplicitModificationWarning)
-    # Verifica se o diretório de saída existe, se não, cria
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
+# ── I/O ───────────────────────────────────────────────────────────────────────
+
+def _normalize_output_path(output_dir: str, name: str) -> str:
+    """Return the full .h5ad path for a given sample name."""
+    filename = name if name.endswith(".h5ad") else f"{name}.h5ad"
+    return os.path.join(output_dir, filename)
+
+
+def save_adatas(output_dir: str, adatas_dict: dict[str, AnnData]) -> None:
+    """
+    Write each AnnData in *adatas_dict* to *output_dir* as .h5ad files.
+
+    The directory is created if it does not exist. The caller is responsible
+    for validating that *output_dir* is appropriate for the context.
+
+    Parameters
+    ----------
+    output_dir : str
+        Destination directory.
+    adatas_dict : dict[str, AnnData]
+        Mapping of sample ID → AnnData.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    warnings.filterwarnings(
+        "ignore",
+        message="Trying to modify attribute",
+        category=ImplicitModificationWarning,
+    )
 
     for name, adata in adatas_dict.items():
-        if name.endswith('.h5ad'):
-            output_file_path = os.path.join(output_dir, name)
-        else:
-            output_file_path = os.path.join(output_dir, f"{name}.h5ad")
-        sc.write(output_file_path, adata) #type: ignore
-
+        path = _normalize_output_path(output_dir, name)
+        sc.write(path, adata)  # type: ignore[arg-type]

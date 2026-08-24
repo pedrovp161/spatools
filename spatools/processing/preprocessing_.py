@@ -1,4 +1,3 @@
-import os
 from enum import Enum
 from typing import Dict, Optional, Union
 
@@ -152,26 +151,3 @@ def pipeline_custom_mt(adatas_dict, threshold_mt: float = 15.0, **kwargs):
         **kwargs
     )
 
-
-# ==============================================================================
-# EXEMPLO DE USO
-# ==============================================================================
-if __name__ == "__main__":
-    
-    # 1. O usuário está em dúvida? Ele pode rodar isso no Jupyter/Terminal:
-    PipelineType.help()
-
-    # Simulando os dados do usuário
-    data_dir = "/mnt/SATA/spatialPaper/data/corrected"
-    if os.path.exists(data_dir):
-        files = [f for f in os.listdir(data_dir) if f.endswith('.h5ad')]
-        meu_dict_adatas = {f.replace('.h5ad', ''): sc.read_h5ad(os.path.join(data_dir, f)) for f in files}
-
-        # 2. Executando a nova pipeline customizada:
-        # Note que agora o parâmetro mt_threshold aparece no autocomplete!
-        meu_dict_processado = Preprocessing.run(
-            name=PipelineType.MAD_CUSTOM_MT, 
-            adatas_dict=meu_dict_adatas, 
-            mt_threshold=10.5, # Usuário escolheu cortar em 10.5%
-            save_files=False
-        )

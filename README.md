@@ -1,92 +1,142 @@
 # 💻 **spatools**
 
-## 🚧 Under construction! Not ready for use yet! Currently experimenting and planning! 🚧
+[![DOI](https://zenodo.org/badge/912254487.svg)](https://doi.org/10.5281/zenodo.14611085)
 
-## Developed by Pedro Videira Pinho from National Institute of Câncer (Brazil) (c) 2024
-spatools is a Python package developed to facilitate and accelerate the analysis of spatial transcriptomics data. This package was created as part of a Scientific Initiation project at the National Cancer Institute (Brazil), focusing on practical tools for preprocessing, analysis, and visualization of spatial data in transcriptomics experiments. It provides an intuitive interface for spatial data manipulation and multiple visualization functions to assist researchers in studying gene expression patterns across different samples.
+## 🚧 Under construction! Currently experimenting and planning! 🚧
 
-## 🧬 Github
-The github link: [spatools](https://github.com/pedrovp161/pack_v3.git)
-## 🧬 Features
-The **`spatools`** package is divided into four main modules, each with a specific purpose:
+## Developed by Pedro Videira Pinho at the National Cancer Institute (Brazil) (c) 2024
 
-- **`read`** (📂 **input/output**): Functions for reading and saving spatial data files.
-- **`pp`** (🧹 **preprocessing**): Functions for data preprocessing before analysis.
-- **`tl`** (🛠️ **tools**): Tools for data manipulation and processing the output of pp, including spatial data integration and cluster operations, as well as image analisys.
-- **`pl`** (📊 **plotting**): Functions for data visualization, such as cluster plots, spatial images, and cluster quality plots.
-- **`constants`** (🎨 **configuration**): Color definitions and parameters used across various functions in the package.
+**spatools** is a Python package built to speed up the analysis of spatial transcriptomics
+data. It started as a Scientific Initiation project at the National Cancer Institute (INCA,
+Brazil) and focuses on practical tooling for preprocessing, analysis and visualization of
+multi-sample spatial experiments — with a particular emphasis on **colocalization**: which
+clusters end up next to each other in the tissue, and whether that holds across samples.
 
-## Package Structure
-The package is organized so that methods can be accessed directly from the main spatools namespace (aliased as st). For example:
-- **`Plotting`** (**pl**): st.pl.plot_bar(...)
-- **`Tools`** (**tl**): st.tl.process_image(...), st.tl.merge_clusters(...)
+## 🧬 Repository
+
+[github.com/pedrovp161/spatools](https://github.com/pedrovp161/spatools)
+
+## 🧬 Modules
+
+| module | alias | what it does |
+|---|---|---|
+| `reading` | `st.read` | one entry point that detects the format and reads `.h5ad`, Visium folders, or a directory of samples |
+| `processing` | `st.pp` | `Preprocessing` (QC pipelines) and `Processing` (normalization, PCA/UMAP, clustering) |
+| `tools` | `st.tl` | neighborhood distances, colocalization z-scores, Spearman on deconvolution, cluster merging, spot removal, interactive selection |
+| `plotting` | `st.pl` | spatial maps, stacked bars, QC violins, colocalization heatmaps |
+| `constants` | `st.con` | ready-made color palettes |
+
+Everything is reachable from the top-level namespace:
+
+```python
+import spatools as st
+
+st.read(...)                 # reading
+st.pp.Preprocessing.run(...) # preprocessing
+st.tl.correlate_distances(...)
+st.pl.spatial_plot(...)
+st.con.COLORS_23_HEX
+```
 
 ## Installation
-You can install **`spatools`** directly from [pip](https://pypi.org/):
-``` bash
+
+```bash
 pip install spatools
 ```
 
-## **Usage**
-Here’s a simple example of how to use the package to load data, process it, and generate some visualizations:
+From source:
 
-## Load data and save
-``` python
-from spatools.read import Reading, save_spatial_files
-import spatools as st
-import os
-
-# definindo diretório e output
-DIR = os.path.dirname(__file__)
-
-read = Reading(DIR)
-
-adatas_dir = read.list_dict_with_data_free()
-print(adatas_dir)
-
-save_spatial_files(adatas_dir=adatas_dir, output_dir=r"D:\path\to\directory\output")
-
-
+```bash
+git clone https://github.com/pedrovp161/spatools
+cd spatools
+pip install -e .
 ```
 
-## preprocess data and save
+Requires Python 3.9+.
+
+## Quick start
+
+### Reading
+
+`st.read()` inspects the path and picks the reader for you:
 
 ```python
-from spatools.read import Reading, save_spatial_files
 import spatools as st
-from copy import deepcopy
-import random
-import os
 
-DIR = os.path.dirname(__file__)
-read = Reading(DIR)
-
-adatas_dir = read.list_dict_with_data_h5ad()
-print(adatas_dir)
-
-adatas_dir_raw = deepcopy(adatas_dir)
-print(adatas_dir_raw)
-
-random.seed(42)
-
-st.pp.preprocessar(adatas_dir=adatas_dir, save_files=True, output_dir=r'D:\path\to\your\directory\of\output')
-
-# Check summary of data before and after preprocessing
-spots_raw, genes_raw = st.pp.check_summary(dicionario=adatas_dir_raw)
-print(f"Número de celulas antes {spots_raw}, numero de genes antes {genes_raw}")
-
-spots, genes = st.pp.check_summary(dicionario=adatas_dir)
-print(f"Número de celulas depois {spots}, numero de genes depois {genes}")
-print(1-spots/spots_raw)
+adata  = st.read("path/to/sample.h5ad")     # AnnData
+adata  = st.read("path/to/visium_sample/")  # AnnData (folder containing spatial/)
+adatas = st.read("path/to/all_samples/")    # dict[str, AnnData]
 ```
 
+### Quality control
 
+```python
+import spatools as st
 
-[correlation tutorial](./Tutorials/clustering_correlation_analysis.ipynb)
-...
+adatas = st.read("data/raw")
+
+# See every available pipeline and what it filters
+st.pp.PipelineType.help()
+
+filtered = st.pp.Preprocessing.run(
+    name=st.pp.PipelineType.MAD_COMBINED_WITH_MT,
+    adatas_dict=adatas,
+    k=4,
+    save_files=True,
+    output_dir="data/filtered",
+)
+
+# Per-sample stats land in uns["preprocessing_stats_<sample>"]
+st.pl.preprocessing_quality_metrics(filtered)
+```
+
+Outlier detection uses the **MAD** (median absolute deviation) rather than mean ± standard
+deviation, since the median and MAD are not dragged around by the very outliers being
+detected.
+
+### Clustering
+
+```python
+adata = st.pp.Processing.run("pearson_PCA", adata, n_pcs=30, resolution=0.5)
+# or the classic path:
+adata = st.pp.Processing.run("lognorm", adata, n_hvg=3000, subset_hvg=True)
+```
+
+### Colocalization
+
+```python
+adata = st.tl.correlate_distances(
+    adata, is_concatenated=True, cluster_col="clusters_0.6", batch_key="batch"
+)
+adata = st.tl.z_score(adata)
+
+st.pl.z_score_matrixplot(adata, title="Cluster colocalization")
+st.pl.boxplot_cluster_correlations(adata, cluster_col="clusters_0.6", subset=True, value=9)
+```
+
+Positive z-score means two clusters are neighbors more often than chance would predict;
+negative means they exclude each other.
+
+## 📚 Tutorials
+
+| notebook | covers |
+|---|---|
+| [Pre-processing](./Tutorials/Pre-processing.ipynb) | the MAD criterion step by step, then `Preprocessing` across many samples, `preprocessing_quality_metrics`, `outlier_quality` |
+| [processing](./Tutorials/processing.ipynb) | `Processing` pipelines (`lognorm`, `pearson_PCA`), `merge_clusters`, `remove_spots`, `translate_anndata_genes`, `SelectionTool` |
+| [ploting](./Tutorials/ploting.ipynb) | `spatial_plot` in every mode, `bar`, `clusters_quality_violin_boxplot`, color palettes |
+| [clustering_correlation_analysis](./Tutorials/clustering_correlation_analysis.ipynb) | `correlate_distances`, `z_score`, `z_score_matrixplot`, `boxplot_cluster_correlations`, Spearman on cell2location output |
+
+## Building and publishing
+
+Metadata lives entirely in `pyproject.toml` (PEP 621) — there is no `setup.py`:
+
+```bash
+pip install --upgrade build twine
+python -m build
+twine check dist/*
+twine upload dist/*
+```
 
 ## Licence
-This package is licensed under the [MIT License](https://www.mit.edu/~amini/LICENSE.md).
 
-...
-[![DOI](https://zenodo.org/badge/912254487.svg)](https://doi.org/10.5281/zenodo.14611085)
+[MIT License](./LICENCE).

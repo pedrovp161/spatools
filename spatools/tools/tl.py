@@ -1,14 +1,9 @@
 import os
-import scipy
 import mygene
-import warnings
 import itertools
 import numpy as np
 import pandas as pd
-from PIL import Image
-from skimage import io
 from pandas import Series
-import numpy.typing as npt
 from pmenu_lib import pmenu
 from anndata import AnnData
 from time import perf_counter
@@ -16,39 +11,11 @@ from .. import constants as con
 import matplotlib.pyplot as plt
 from matplotlib.path import Path
 from scipy.stats import spearmanr
-from scipy.spatial import distance
-from matplotlib.widgets import Slider
 from scipy.spatial.distance import cdist
-from multiprocessing import Pool, cpu_count
-from typing import List, Any, Optional, Union, Final, Tuple
+from typing import Optional, Union, Final, Tuple
 
 from ..reading import read
 
-COLORS_23_HEX = [
-    "#00206F",  # 0
-    "#E6D647",  # 1
-    "#AA6028",  # 2
-    "#13B151",  # 3
-    "#590058",  # 4
-    "#C5DF77",  # 5
-    "#0187E2",  # 6
-    "#FFA161",  # 7
-    "#8865C3",  # 8
-    "#FC506F",  # 9
-    "#76E8C3",  # 10
-    "#7E002E",  # 11
-    "#2A5200",  # 12
-    "#FF7FCA",  # 13
-    "#813E73",  # 14
-    "#FF878F",  # 15
-    "#22DEE6",  # 16
-    "#C94E3C",  # 17
-    "#836E20",  # 18
-    "#9F9638",  # 19
-    "#B149A1",  # 20
-    "#804D11",  # 21
-    "#812F19"   # 22
-]
 
 def spatools_check(adata):
     if "spatools" in adata.uns:
@@ -110,7 +77,7 @@ def check_spots_analysed(adata: AnnData,
 
                 elif len((adata.obs[batch_key]).unique()) == 1:
                     counts = adata.uns[spatools_key]["point_name"].value_counts()
-                    adata.uns["check_distances"][adata.obs[batch_key].unique()[0]]
+                    adata.uns["check_distances"][adata.obs[batch_key].unique()[0]] = counts
                 else: print("Erro inesperado")
             except KeyError:
                 counts = adata.uns[spatools_key]["point_name"].value_counts()
@@ -191,8 +158,8 @@ def correlate_distances(adata: AnnData,
                 nearest_df["combination"] = nearest_df.apply(lambda row: tuple(sorted((row["color"], row["color_neigh"]))), axis=1)
             adata.uns["spatools"] = nearest_df
 
-    # adding a df for result cheking 
-    adata = check_spots_analysed(adata, batch_key="batch", spatools_key="spatools")
+    # adding a df for result cheking
+    adata = check_spots_analysed(adata, batch_key=batch_key, spatools_key="spatools")
 
     return adata
 
@@ -347,7 +314,9 @@ def merge_clusters(adata: AnnData,
         raise KeyError(f"'{clusters_col}' column not found in 'adata.obs'.")
 
     # Replace old cluster labels with new ones
-    adata.obs[new_clusters_col] = adata.obs[clusters_col].replace(rename_dict)
+    # .astype(str) antes do replace: em coluna categórica o pandas deprecou o replace que
+    # altera categorias. O resultado é idêntico, pois a coluna vira string logo abaixo.
+    adata.obs[new_clusters_col] = adata.obs[clusters_col].astype(str).replace(rename_dict)
 
     # Ensure values are in the correct order
     unique_values = sorted(adata.obs[new_clusters_col].unique())
@@ -594,21 +563,21 @@ def z_score(adata: AnnData,
         # To treat combinations (a, b) and (b, a) as equivalent
         zscore_matrix['a'], zscore_matrix['b'] = np.minimum(zscore_matrix['a'], zscore_matrix['b']), np.maximum(zscore_matrix['a'], zscore_matrix['b'])
 
-        # Creating the correlation matrix
+        # Creating the correlation matrix already as float and zero-filled, so that
+        # unobserved pairs stay 0 without an object -> float downcast on fillna
         unique_values = sorted(set(zscore_matrix['a']).union(set(zscore_matrix['b'])))
-        z_matrix = pd.DataFrame(index=unique_values, columns=unique_values)
+        z_matrix = pd.DataFrame(
+            0.0, index=unique_values, columns=unique_values, dtype=float
+        )
 
         # Fill in the correlation matrix with the Z_scores
         for i in unique_values:
             for j in unique_values:
-                if i <= j:  
-                    z_score = zscore_matrix[((zscore_matrix['a'] == i) & (zscore_matrix['b'] == j)) | ((zscore_matrix['a'] == j) & (zscore_matrix['b'] == i))]['Z_score']
-                    if not z_score.empty:
-                        z_matrix.loc[i, j] = z_score.values[0]
-                        z_matrix.loc[j, i] = z_score.values[0]
-
-        # Filling values to 0
-        z_matrix.fillna(0, inplace=True)
+                if i <= j:
+                    pair_score = zscore_matrix[((zscore_matrix['a'] == i) & (zscore_matrix['b'] == j)) | ((zscore_matrix['a'] == j) & (zscore_matrix['b'] == i))]['Z_score']
+                    if not pair_score.empty:
+                        z_matrix.loc[i, j] = pair_score.values[0]
+                        z_matrix.loc[j, i] = pair_score.values[0]
 
         # Save to the correlation dictionary
         z_list[batch] = z_matrix
@@ -635,25 +604,28 @@ def spatial_spearman(adata: AnnData, #type: ignore
     # Calcular correlação
     corr, p_value = spearmanr(x, y)
     
-    # Gráfico de dispersão
-    plt.figure(figsize=(12, 8))
-    plt.scatter(x, y, c='blue', alpha=0.5)#type: ignore
-    plt.xlabel(f"Abundância de {cell1}", fontsize=18)
-    plt.ylabel(f"Abundância de {cell2}", fontsize=18)
-    plt.title(f"Correlação de Spearman entre {cell1} e {cell2}", fontsize=20)
-    plt.grid(True)
-    plt.text(0.95, 0.95, f'Correlação: {corr:.4f}', transform=plt.gca().transAxes,
-             fontsize=12, color='red', verticalalignment='top')
-    plt.text(0.95, 0.90, f'Valor-p: {p_value:.4e}', transform=plt.gca().transAxes,
-             fontsize=12, color='red', verticalalignment='top')
+    # Grafico de dispersao: so vale a pena montar se for exibido ou salvo. Antes a figura
+    # era construida e descartada em toda chamada, o que pesava em spearman_correlation_matrix
+    # (N x N chamadas). O retorno e identico nos dois casos.
+    if saveFig or show:
+        plt.figure(figsize=(12, 8))
+        plt.scatter(x, y, c='blue', alpha=0.5)#type: ignore
+        plt.xlabel(f"Abundância de {cell1}", fontsize=18)
+        plt.ylabel(f"Abundância de {cell2}", fontsize=18)
+        plt.title(f"Correlação de Spearman entre {cell1} e {cell2}", fontsize=20)
+        plt.grid(True)
+        plt.text(0.95, 0.95, f'Correlação: {corr:.4f}', transform=plt.gca().transAxes,
+                 fontsize=12, color='red', verticalalignment='top')
+        plt.text(0.95, 0.90, f'Valor-p: {p_value:.4e}', transform=plt.gca().transAxes,
+                 fontsize=12, color='red', verticalalignment='top')
 
-    if saveFig:
-        plt.savefig(f'spatial_spearman_{cell1}_{cell2}.png', dpi=300)
-    if show:
-        plt.show()
+        if saveFig:
+            plt.savefig(f'spatial_spearman_{cell1}_{cell2}.png', dpi=300)
+        if show:
+            plt.show()
 
-    plt.close()
-    
+        plt.close()
+
     return (corr, p_value) # type: ignore
 # Função para matriz de correlação
 def spearman_correlation_matrix(adata: AnnData, 
@@ -993,9 +965,9 @@ class SelectionTool:
             self.plot()
 
         elif event.key == "v":
-            self.color = [i for i in COLORS_23_HEX][self.b]
+            self.color = con.COLORS_23_HEX[self.b]
             self.b += 1
-            if self.b == len(COLORS_23_HEX):
+            if self.b == len(con.COLORS_23_HEX):
                 self.b = 0
             self.plot()
 
@@ -1107,12 +1079,3 @@ class SelectionTool:
         """
         self.main()
         return self.adata
-
-
-if __name__ == "__main__":
-
-    tool: SelectionTool = SelectionTool("/mnt/SATA/spatialCourse/data")
-    adata = tool.run()
-
-    if "selected_area" in adata.obs.columns:
-        print(adata.obs["selected_area"].value_counts())

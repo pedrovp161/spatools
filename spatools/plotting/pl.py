@@ -1,12 +1,10 @@
 import os
-import warnings
 import numpy as np
 import scanpy as sc
 import pandas as pd
 import seaborn as sns
 import matplotlib as mpl
 import matplotlib.colors
-from copy import deepcopy
 from anndata import AnnData
 from scipy.stats import norm
 import matplotlib.pyplot as plt
@@ -19,11 +17,21 @@ from matplotlib.lines import Line2D as _Line2D
 from statsmodels.stats.multitest import multipletests
 from matplotlib.colors import LinearSegmentedColormap
 
-DEFAULT_COLORS = [
-    "#cd3f35", "#62b74f", "#9e5ecf", "#c54eae", "#538342",
-    "#676bc6", "#db9448", "#40bbce", "#1d19e6", "#e7b4e9",
-    "#4ebba0", "#ca6f87", "#615963"
-]
+
+# Largura da area de captura do Visium, usada no modo de eixos em milimetros.
+CAPTURE_AREA_MM = 6.5
+
+# Tamanhos de fonte relativos ao parametro `fontsize` do spatial_plot. O titulo e a
+# referencia (1.00) e por construcao sempre o maior; mexer em `fontsize` move todos juntos.
+_FONT_SCALE = {
+    "title":        1.00,
+    "legend_title": 0.78,
+    "legend_label": 0.67,
+    "cbar_label":   0.67,
+    "axis_label":   0.56,
+    "tick":         0.50,
+}
+
 
 def calcular_ncol(n_itens, max_cols=3, min_cols=1, itens_por_coluna=5):
     """
@@ -159,7 +167,10 @@ def bar(
     if group_by not in adata.obs.columns:
         raise ValueError(f"A coluna '{group_by}' não está em adata.obs")
 
-    count_data = adata.obs.groupby([group_by, clusters_col]).size().unstack(fill_value=0)# type: ignore
+    # observed=False explicito: o pandas vai inverter esse padrao. Para barras empilhadas
+    # queremos manter as combinacoes nao observadas (preenchidas com 0), senao clusters
+    # ausentes de um grupo sumiriam da legenda e as cores desalinhariam.
+    count_data = adata.obs.groupby([group_by, clusters_col], observed=False).size().unstack(fill_value=0)# type: ignore
 
     if group_order:
         count_data = count_data.reindex(group_order)
@@ -216,7 +227,9 @@ def bar(
     ax.set_ylabel(ylabel, fontsize=23)
     ax.set_xticklabels(ax.get_xticklabels(), fontsize=14, rotation=angle)
 
-    ncol = calcular_ncol(n_itens=len(clusters_col), max_cols=3, min_cols=1, itens_por_coluna=10)
+    # n_itens = quantidade de clusters na legenda. Antes era len(clusters_col), que mede
+    # o comprimento do NOME da coluna e nao tem relacao com o numero de categorias.
+    ncol = calcular_ncol(n_itens=n_clusters, max_cols=3, min_cols=1, itens_por_coluna=10)
 
     ax.legend(
         title=legend,
@@ -356,11 +369,17 @@ def spatial_plot(
     scatter_plot: bool = True,
     ncols: int = 7,
     spot_size: int = 5,
-    title_fontsize: int = 18,
+    title_fontsize: Optional[float] = None,
     custom_colors: Union[dict, list, None] = None,
     show: bool = True,
     dpi: int = 150,
-    figsize: Union[None, tuple[int, int]] = None
+    figsize: Union[None, tuple[int, int]] = None,
+    # Parametros novos, acrescentados no fim para nao deslocar a ordem posicional
+    # de quem ja chamava a funcao.
+    axes_unit: Optional[str] = None,
+    tissue_alpha: float = 1.0,
+    fontsize: float = 18,
+    legend_ncol: int = 1,
 ) -> None:
     """
     Plot spatial data for each sample or batch using AnnData spatial coordinates and images.
@@ -380,14 +399,34 @@ def spatial_plot(
     sample_key : str, optional
         Column in `adata.obs` that identifies each sample or batch. Default is `"sample"`.
     scatter_plot : bool, optional
-        If `True`, overlay spot points on the tissue image. If `False`, show the tissue
-        image with spatial axes scaled in millimeters.
+        If `True`, overlay spot points on the tissue image. This controls **only whether
+        the spots are drawn** — the axis system is chosen by `axes_unit`.
     ncols : int, optional
         Maximum number of columns in the subplot grid.
     spot_size : int, optional
         Size of the scatter points.
-    title_fontsize : int, optional
-        Font size for each subplot title.
+    title_fontsize : float, optional
+        Explicit font size for the subplot titles. When `None` (default) the title size is
+        `fontsize`, which keeps it the largest element on the figure.
+    axes_unit : {None, "mm", "px", "off"}, optional
+        Which axis system to draw. Independent of `scatter_plot`, so spots and axes can be
+        combined.
+
+        - ``None`` (default) — backwards-compatible behaviour: ``"mm"`` when
+          `scatter_plot=False`, ``"off"`` when `scatter_plot=True`.
+        - ``"mm"`` — image stretched to the Visium capture area and axes in millimetres,
+          with 2 mm major and 1 mm minor ticks. Works **with or without** spots.
+        - ``"px"`` — pixel coordinates with the axes visible.
+        - ``"off"`` — no axes at all.
+    tissue_alpha : float, optional
+        Opacity of the tissue image, from 0 to 1. Values around 0.5-0.6 fade the H&E so the
+        spot colours stand out. Default 1.0.
+    fontsize : float, optional
+        Base font size. Every text element scales from it proportionally (see
+        `_FONT_SCALE`), with the title as the reference and therefore always the largest.
+        Raising this single value enlarges titles, legend, axis labels and ticks together.
+    legend_ncol : int, optional
+        Number of columns in the categorical legend. Useful when there are many clusters.
     custom_colors : Union[dict, list, None], optional
         Custom color mapping for categorical groups. If a dict, keys are category labels
         and values are colors. If a list, it must match the number of categories.
@@ -405,7 +444,30 @@ def spatial_plot(
     >>> spatial_plot(adata=adata, group=group, highlight="Niche1", sample_key="library_id")
     >>> # Gene expression visualization
     >>> spatial_plot(adata=adata, group="ENSG00000000003", sample_key="library_id")
+    >>> # Clusters overlaid on the tissue *and* millimetre axes, with bigger fonts
+    >>> spatial_plot(
+    ...     adata=adata, group=group, sample_key="library_id",
+    ...     axes_unit="mm", tissue_alpha=0.55, fontsize=24, legend_ncol=2,
+    ... )
     """
+    # `scatter_plot` diz se desenhamos os spots; `axes_unit` diz qual eixo mostrar.
+    # Antes os dois estavam presos no mesmo parametro, o que tornava impossivel ter
+    # spots e eixos em milimetros ao mesmo tempo.
+    if axes_unit is None:
+        unit = "off" if scatter_plot else "mm"
+    else:
+        unit = str(axes_unit).lower()
+        if unit not in {"mm", "px", "off"}:
+            raise ValueError(
+                f"axes_unit deve ser None, 'mm', 'px' ou 'off' — recebido {axes_unit!r}."
+            )
+
+    if not 0 <= tissue_alpha <= 1:
+        raise ValueError(f"tissue_alpha deve estar entre 0 e 1 — recebido {tissue_alpha!r}.")
+
+    fs = {k: fontsize * v for k, v in _FONT_SCALE.items()}
+    if title_fontsize is not None:
+        fs["title"] = title_fontsize
     
     batches = adata.obs[sample_key].unique()
     n = len(batches)
@@ -506,48 +568,76 @@ def spatial_plot(
         img = spatial_data["images"][res_key]
         scale = spatial_data["scalefactors"][f"tissue_{res_key}_scalef"]
         
-        # Ajuste de escala para o modo métrico
-        if not scatter_plot:
-            # No modo 6.5mm, a escala é relativa ao tamanho da imagem (proporcional)
-            # coordenadas_mm = (coords_originais * scale_do_tecido) / tamanho_em_pixels * 6.5
+        # Frame de coordenadas e eixos: decidido por `unit`, nao mais por `scatter_plot`.
+        if unit == "mm":
+            # coordenadas_mm = (coords_originais * scale_do_tecido) / largura_px * 6.5
             h, w = img.shape[:2]
-            coords_display = (b.obsm["spatial"] * scale) / w * 6.5
-            ax.imshow(img, extent=[0, 6.5, 6.5, 0], aspect="auto")
-            
+            coords_display = (b.obsm["spatial"] * scale) / w * CAPTURE_AREA_MM
+            ax.imshow(
+                img,
+                extent=[0, CAPTURE_AREA_MM, CAPTURE_AREA_MM, 0],
+                aspect="auto",
+                alpha=tissue_alpha,
+            )
+
             ax.xaxis.set_major_locator(MultipleLocator(2))
             ax.xaxis.set_minor_locator(MultipleLocator(1))
             ax.yaxis.set_major_locator(MultipleLocator(2))
             ax.yaxis.set_minor_locator(MultipleLocator(1))
-            ax.set_xlabel("mm")
-            ax.set_ylabel("mm")
+            ax.set_xlabel("mm", fontsize=fs["axis_label"])
+            ax.set_ylabel("mm", fontsize=fs["axis_label"])
+            ax.tick_params(labelsize=fs["tick"])
         else:
             coords_display = b.obsm["spatial"] * scale
-            ax.imshow(img)
-            ax.axis("off")
+            ax.imshow(img, alpha=tissue_alpha)
+            if unit == "off":
+                ax.axis("off")
+            else:  # "px"
+                ax.set_xlabel("px", fontsize=fs["axis_label"])
+                ax.set_ylabel("px", fontsize=fs["axis_label"])
+                ax.tick_params(labelsize=fs["tick"])
 
         # Plotar pontos apenas se solicitado
         if do_scatter:
-            if is_obs:
+            # A ramificacao aqui e categorico vs continuo, nao obs vs gene: uma coluna
+            # NUMERICA de obs e continua e nao tem entrada em color_map.
+            if is_obs and not is_continuous:
                 c = [color_map[str(v)] for v in b.obs[group]]
                 cmap = None
-            else:
+            elif is_gene:
                 expr = b[:, group].X
                 c = expr.toarray().flatten() if hasattr(expr, "toarray") else expr.flatten()# type: ignore
+                cmap = "plasma"
+            else:
+                c = np.asarray(b.obs[group].values, dtype=float)
                 cmap = "plasma"
             
             ax.scatter(coords_display[:, 0], coords_display[:, 1], c=c, s=spot_size, cmap=cmap, vmin=vmin, vmax=vmax, linewidths=0)
 
-        ax.set_title(str(batch), fontsize=title_fontsize)
+        ax.set_title(str(batch), fontsize=fs["title"])
 
     # Limpar eixos vazios e Adicionar Legendas
     for j in range(idx + 1, len(axes)): axes[j].axis("off")
 
-    if is_obs:
+    if is_obs and not is_continuous:
         handles = [Patch(facecolor=color_map[str(cl)], label=str(cl)) for cl in clusters]# type: ignore
-        fig.legend(handles=handles, loc="center right", bbox_to_anchor=(1.1, 0.5), title=group)
-    elif is_gene:
-        sm = cm.ScalarMappable(norm=mpl.colors.Normalize(vmin=vmin, vmax=vmax), cmap="plasma")# type: ignore
-        fig.colorbar(sm, ax=axes, fraction=0.02, pad=0.04, label=group)
+        # loc="center left" ancorado em x=1.0 faz a legenda crescer para FORA da figura.
+        # Com "center right" em x=1.1 ela crescia para dentro e cobria o ultimo painel —
+        # discreto na fonte padrao, e fatal ao aumentar `fontsize`.
+        fig.legend(
+            handles=handles,
+            loc="center left",
+            bbox_to_anchor=(1.0, 0.5),
+            title=group,
+            ncol=legend_ncol,
+            fontsize=fs["legend_label"],
+            title_fontsize=fs["legend_title"],
+        )
+    elif is_continuous:
+        sm = mpl.cm.ScalarMappable(norm=mpl.colors.Normalize(vmin=vmin, vmax=vmax), cmap="plasma")# type: ignore
+        cbar = fig.colorbar(sm, ax=axes, fraction=0.02, pad=0.04)
+        cbar.set_label(group, fontsize=fs["cbar_label"])
+        cbar.ax.tick_params(labelsize=fs["tick"])
 
     if show: plt.show()
 
@@ -1179,9 +1269,24 @@ def preprocessing_quality_metrics(
         x_labels = [f"Stage {chr(65+i)}" for i in range(num_steps)]
     
     valid_cols = ~np.all(np.isnan(all_values), axis=0)
+    n_validas = int(valid_cols.sum())
+
     all_values = all_values[:, valid_cols]
     columns = np.array(default_columns)[valid_cols]
-    x_labels = np.array(x_labels)[valid_cols]# type: ignore
+
+    # x_labels aceita dois tamanhos: um rotulo por etapa POTENCIAL (num_steps, e entao
+    # mascaramos junto com os dados) ou um rotulo por etapa EFETIVAMENTE aplicada.
+    # Antes so o primeiro caso funcionava, e o segundo -- o mais natural para quem chama --
+    # levantava IndexError.
+    x_labels = np.array(x_labels)
+    if x_labels.size == num_steps:
+        x_labels = x_labels[valid_cols]
+    elif x_labels.size != n_validas:
+        raise ValueError(
+            f"x_labels tem {x_labels.size} rotulos, mas esta pipeline aplicou "
+            f"{n_validas} etapas (de {num_steps} possiveis). "
+            f"Passe {n_validas} ou {num_steps} rotulos."
+        )
 
     df = pd.DataFrame(all_values, columns=columns, index=sample_names)
     step_sums = df.sum(axis=0)
@@ -1356,15 +1461,4 @@ def preprocessing_quality_metrics(
     plt.show()
 
     return df
-
-if __name__ == "__main__":
-    import scanpy as sc 
-    bdata = sc.read("/mnt/SATA/spatialPaper/output/spatialPaperFiltered.h5ad")
-    bdata.obs_names_make_unique()
-    import spatools as st
-    spatial_plot(bdata, 
-                scatter_plot=False, # TODO teste different values here (True, False)
-                sample_key="library_id",
-                group = "library_id",
-                figsize=(17,10))# TODO teste different values here (gene, cluster, response, etc)
 

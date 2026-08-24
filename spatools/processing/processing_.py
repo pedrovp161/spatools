@@ -27,9 +27,10 @@ class Processing:
             options include:
             - 'pearson_PCA': Normalizes using Pearson residuals, followed by 
               PCA, Neighbors, UMAP, and Leiden clustering.
-            - 'lognorm': Performs total count normalization, log1p transformation, 
+            - 'lognorm': Performs total count normalization, log1p transformation,
               HVG selection, scaling, and PCA.
-            - 'scVI_paper': Placeholder for scVI-based integration/processing.
+            - 'scVI_pearson': Placeholder for scVI-based integration/processing
+              (not implemented yet).
         adata : sc.AnnData
             The annotated data matrix to be processed.
         **kwargs : dict, optional
@@ -69,7 +70,9 @@ def pearson_pipeline(
     )
 
     sc.tl.umap(adata)
-    sc.tl.leiden(adata, resolution=resolution)
+    # flavor explicito: o scanpy vai trocar o padrao de "leidenalg" para "igraph", o que
+    # mudaria os clusters silenciosamente. Fixar aqui mantem o resultado reproduzivel.
+    sc.tl.leiden(adata, resolution=resolution, flavor="leidenalg")
 
     return adata
 

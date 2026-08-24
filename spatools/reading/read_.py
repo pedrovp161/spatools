@@ -115,8 +115,6 @@ def read_single_h5ad(item_path: str, filter_empty_genes: bool = True, **kwargs) 
     # sc.read_h5ad pode ser sensível a caminhos absolutos no Linux dependendo da versão
     adata = sc.read_h5ad(item_path)
     return _post_process_adata(adata, filter_empty_genes)
-            
-    return dictionary
 
 @register_reader("free")
 def read_free_dir(dir_path: str, filter_empty_genes: bool = True) -> dict:
@@ -201,11 +199,21 @@ def read(dir_path: str = "", **kwargs) -> Union[dict, AnnData]:
         adata = matchName(dir_path = dir_path, adata = adata)
         return adata
     
-    if os.listdir(dir_path) == ["spatial", "filtered_feature_bc_matrix.h5"] or os.listdir(dir_path) == ["filtered_feature_bc_matrix.h5", "spatial"]:
-        adata = read_free_dir(dir_path)
-        adata = matchName(dir_path = dir_path, adata = adata)
+    # Atalho para uma única amostra: o próprio dir_path é a amostra (tem 'spatial/' dentro),
+    # e não uma pasta que contém várias amostras. Antes isso era testado comparando
+    # os.listdir() com listas literais em ordens específicas, o que quebrava com qualquer
+    # arquivo extra na pasta, e chamava read_free_dir (que devolve dict) onde matchName
+    # espera um AnnData.
+    if os.path.isdir(os.path.join(dir_path, "spatial")):
+        if os.path.isdir(os.path.join(dir_path, "filtered_feature_bc_matrix")):
+            adata = _read_single_free(dir_path)
+        else:
+            adata = sc.read_visium(dir_path)
+        adata = _post_process_adata(adata, kwargs.get("filter_empty_genes", True))
+        adata = matchName(dir_path=dir_path, adata=adata)
         return adata
-    
+
+
     print(f"🔎 Analisando diretório: {dir_path}")
 
     for item_name in sorted(os.listdir(dir_path)):
